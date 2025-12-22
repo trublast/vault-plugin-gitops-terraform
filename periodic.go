@@ -32,10 +32,12 @@ package gitops_terraform
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/hashicorp/vault/sdk/logical"
+	trdl_task_manager "github.com/werf/trdl/server/pkg/tasks_manager"
 
 	"github.com/trublast/vault-plugin-gitops-terraform/pkg/git_repository"
 	"github.com/trublast/vault-plugin-gitops-terraform/pkg/task_manager"
@@ -58,11 +60,21 @@ const (
 func (b *backend) PeriodicTask(storage logical.Storage) error {
 	ctx := context.Background()
 
-	_, lastFinishedCommit, err := collectSavedWorkingCommits(ctx, storage)
+	lastStartedCommit, lastFinishedCommit, err := collectSavedWorkingCommits(ctx, storage)
 	if err != nil {
 		return err
 	}
 
+	// If there's a started commit but not finished, task is in progress, wait for it
+	if lastStartedCommit != "" && lastStartedCommit != lastFinishedCommit {
+		b.Logger().Info("task is in progress, waiting for completion", "lastStartedCommit", lastStartedCommit, "lastFinishedCommit", lastFinishedCommit)
+		return nil
+	}
+
+	// If commits are equal (including both empty), we can check for new commits
+	// This means either:
+	// - Initial state (both empty) - check from beginning
+	// - Last commit finished - check for new commits after lastFinishedCommit
 	return b.processGit(ctx, storage, lastFinishedCommit)
 }
 
@@ -94,39 +106,48 @@ func (b *backend) processGit(ctx context.Context, storage logical.Storage, lastF
 	}
 	b.Logger().Info("obtain", "commitHash", *commitHash)
 
-	if err := storeLastStartedCommit(ctx, storage, *commitHash); err != nil {
+	// Create task first, then save lastStartedCommit only if task was successfully created
+	taskUUID, err := b.createTask(ctx, storage, *commitHash)
+	if err != nil {
 		return err
 	}
 
-	err = b.createTask(ctx, storage, *commitHash)
-	if err != nil {
+	// If taskUUID is empty, task was not created (e.g., ErrBusy), don't save lastStartedCommit
+	if taskUUID == "" {
+		b.Logger().Info("task was not created, skipping lastStartedCommit save")
+		return updateLastRunTimeStamp(ctx, storage, newTimeStamp)
+	}
+
+	// Task created successfully, now save lastStartedCommit
+	if err := storeLastStartedCommit(ctx, storage, *commitHash); err != nil {
 		return err
 	}
 
 	return updateLastRunTimeStamp(ctx, storage, newTimeStamp)
 }
 
-// createTask creates task and store gotten task_uuid
-func (b *backend) createTask(ctx context.Context, storage logical.Storage, commitHash string) error {
-	b.Logger().Warn("Run task is not implemented")
-	// taskUUID, err := b.RunTask(ctx, storage, func(ctx context.Context, storage logical.Storage) error {
-	// 	return b.processCommit(ctx, storage, commitHash)
-	// })
-	// if errors.Is(err, task_manager.ErrBusy) {
-	// 	b.Logger().Warn(fmt.Sprintf("unable to add queue manager task: %s", err.Error()))
-	// 	return nil
-	// }
-	// if err != nil {
-	// 	return fmt.Errorf("unable to add queue manager task: %w", err)
-	// }
+// createTask creates task and returns task_uuid. Returns empty string if task was not created (e.g., ErrBusy).
+func (b *backend) createTask(ctx context.Context, storage logical.Storage, commitHash string) (string, error) {
+	taskUUID, err := b.TasksManager.RunTask(ctx, storage, func(ctx context.Context, storage logical.Storage) error {
+		return b.processCommit(ctx, storage, commitHash)
+	})
+	if errors.Is(err, trdl_task_manager.ErrBusy) {
+		b.Logger().Warn(fmt.Sprintf("unable to add queue manager task: %s", err.Error()))
+		return "", nil // Task not created, but not an error
+	}
+	if err != nil {
+		return "", fmt.Errorf("unable to add queue manager task: %w", err)
+	}
 
-	// b.Logger().Debug(fmt.Sprintf("Added new task with uuid %q for commitHash: %q", taskUUID, commitHash))
-	// return taskManagerServiceProvider(storage, b.Logger()).SaveTask(ctx, taskUUID, commitHash)
-	return nil
+	b.Logger().Debug(fmt.Sprintf("Added new task with uuid %q for commitHash: %q", taskUUID, commitHash))
+	if err := taskManagerServiceProvider(storage, b.Logger()).SaveTask(ctx, taskUUID, commitHash); err != nil {
+		return "", fmt.Errorf("unable to save task: %w", err)
+	}
+
+	return taskUUID, nil
 }
 
-// collectSavedWorkingCommits gets, checks  and  returns : lastStartedCommit, lastPushedToK8sCommit, LastK8sFinishedCommit
-// possible valid states: 1)  A, B, B  2) A, A, B 3) A, A, A
+// collectSavedWorkingCommits gets, checks  and  returns : lastStartedCommit, lastFinishedCommit
 func collectSavedWorkingCommits(ctx context.Context, storage logical.Storage) (string, string, error) {
 	lastStartedCommit, err := util.GetString(ctx, storage, storageKeyLastStartedCommit)
 	if err != nil {
@@ -156,11 +177,9 @@ func updateLastRunTimeStamp(ctx context.Context, storage logical.Storage, timeSt
 	return util.PutInt64(ctx, storage, lastPeriodicRunTimestampKey, timeStamp.Unix())
 }
 
-// processCommit aim action with retries
-func (b *backend) processCommit(ctx context.Context, storage logical.Storage, hashCommit string) error {
-	return nil
-}
-
 func storeLastStartedCommit(ctx context.Context, storage logical.Storage, hashCommit string) error {
 	return util.PutString(ctx, storage, storageKeyLastStartedCommit, hashCommit)
+}
+func storeLastFinishedCommit(ctx context.Context, storage logical.Storage, hashCommit string) error {
+	return util.PutString(ctx, storage, storageKeyLastFinishedCommit, hashCommit)
 }

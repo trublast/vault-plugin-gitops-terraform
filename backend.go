@@ -9,10 +9,13 @@ import (
 	"github.com/trublast/vault-plugin-gitops-terraform/pkg/git"
 	"github.com/trublast/vault-plugin-gitops-terraform/pkg/git_repository"
 	"github.com/trublast/vault-plugin-gitops-terraform/pkg/pgp"
+	"github.com/trublast/vault-plugin-gitops-terraform/pkg/vault_client"
+	"github.com/werf/trdl/server/pkg/tasks_manager"
 )
 
 type backend struct {
 	*framework.Backend
+	TasksManager *tasks_manager.Manager
 }
 
 var _ logical.Factory = Factory
@@ -37,7 +40,7 @@ func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend,
 func newBackend(c *logical.BackendConfig) (*backend, error) {
 
 	b := &backend{
-		// TasksManager: tasks_manager.NewManager(c.Logger),
+		TasksManager: tasks_manager.NewManager(c.Logger),
 		// AccessVaultClientProvider: accessVaultClientProvider,
 	}
 
@@ -52,6 +55,7 @@ func newBackend(c *logical.BackendConfig) (*backend, error) {
 
 	baseBackend.Paths = framework.PathAppend(
 		git_repository.Paths(baseBackend),
+		vault_client.Paths(baseBackend),
 		git.CredentialsPaths(),
 		pgp.Paths(),
 	)

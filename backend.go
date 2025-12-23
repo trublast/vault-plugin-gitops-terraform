@@ -10,12 +10,10 @@ import (
 	"github.com/trublast/vault-plugin-gitops-terraform/pkg/git_repository"
 	"github.com/trublast/vault-plugin-gitops-terraform/pkg/pgp"
 	"github.com/trublast/vault-plugin-gitops-terraform/pkg/vault_client"
-	"github.com/werf/trdl/server/pkg/tasks_manager"
 )
 
 type backend struct {
 	*framework.Backend
-	TasksManager *tasks_manager.Manager
 }
 
 var _ logical.Factory = Factory
@@ -38,11 +36,7 @@ func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend,
 }
 
 func newBackend(c *logical.BackendConfig) (*backend, error) {
-
-	b := &backend{
-		TasksManager: tasks_manager.NewManager(c.Logger),
-		// AccessVaultClientProvider: accessVaultClientProvider,
-	}
+	b := &backend{}
 
 	baseBackend := &framework.Backend{
 		BackendType: logical.TypeLogical,
@@ -69,9 +63,6 @@ func (b *backend) SetupBackend(ctx context.Context, config *logical.BackendConfi
 	if err := b.Setup(ctx, config); err != nil {
 		return err
 	}
-
-	// Set storage for TasksManager to use in callbacks
-	// b.TasksManager.Storage = config.StorageView
 
 	return nil
 }

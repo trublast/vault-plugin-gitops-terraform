@@ -31,47 +31,90 @@ func GitService(ctx context.Context, storage logical.Storage, logger hclog.Logge
 	}
 }
 
-// CheckForNewCommit returns new commit hashes satisfied given rules
-// 1. check defined by cfg repo&branch
-// 2. collect all commits after specified last_proceeded_commit
-// 3. returns first commit signed with specified amount of PGP, after last_proceeded_commit
-func (g gitService) CheckForNewCommitFrom(edgeCommit gitCommitHash) (*gitCommitHash, error) {
+// FindFirstSignedCommitFromHead searches for the first signed commit starting from HEAD
+// and going backwards until lastFinishedCommit (or initialLastSuccessfulCommit if lastFinishedCommit is empty).
+// Returns the first commit that has the required number of verified signatures.
+func (g gitService) FindFirstSignedCommitFromHead(lastFinishedCommit gitCommitHash) (*gitCommitHash, error) {
 	config, err := GetConfig(g.ctx, g.storage, g.logger)
 	if err != nil {
 		return nil, err
 	}
 
-	gitRepo, newCommits, err := g.getNewCommits(config, edgeCommit)
-	if err != nil {
-		return nil, fmt.Errorf("getting new commits: %w", err)
-	}
-	if len(newCommits) == 0 {
-		g.logger.Debug("no new commits: nothing to check ")
-		return nil, nil
+	// Determine the boundary commit: use lastFinishedCommit if set, otherwise use initialLastSuccessfulCommit
+	boundaryCommit := lastFinishedCommit
+	if boundaryCommit == "" {
+		boundaryCommit = config.InitialLastSuccessfulCommit
 	}
 
-	return g.getFirstSignedCommit(gitRepo, newCommits, config.RequiredNumberOfVerifiedSignaturesOnCommit)
-}
-
-// getNewCommits returns new commits after last_proceeded_commit
-func (g gitService) getNewCommits(config *Configuration, edgeCommit gitCommitHash) (*goGit.Repository, []*gitCommitHash, error) {
-	lastProcessedCommit := g.EdgeCommit(config.InitialLastSuccessfulCommit, edgeCommit)
-
-	// clone git repository and get head commit
+	// Clone git repository and get head commit
 	g.logger.Debug(fmt.Sprintf("Cloning git repo %q branch %q", config.GitRepoUrl, config.GitBranch))
 	gitRepo, headCommit, err := g.cloneGit(config.GitRepoUrl, config.GitBranch)
 	if err != nil {
-		return nil, nil, fmt.Errorf("cloning: %w", err)
-	}
-	// skip if already processed
-	if lastProcessedCommit == headCommit {
-		g.logger.Debug("Head commit not changed: no new commits")
-		return nil, nil, nil
+		return nil, fmt.Errorf("cloning repository: %w", err)
 	}
 
-	newCommits, err := collectCommitsFromSomeTillHead(gitRepo, lastProcessedCommit)
+	// If boundary commit is set and equals HEAD, nothing to process
+	if boundaryCommit != "" && boundaryCommit == headCommit {
+		g.logger.Debug("Head commit equals boundary commit: no new commits to process")
+		return nil, nil
+	}
 
-	return gitRepo, newCommits, err
+	// Get trusted PGP keys
+	trustedPGPPublicKeys, err := pgp.GetTrustedPGPPublicKeys(g.ctx, g.storage)
+	if err != nil {
+		return nil, fmt.Errorf("unable to get trusted public keys: %w", err)
+	}
+
+	// Iterate from HEAD backwards until we find a signed commit or reach the boundary
+	ref, err := gitRepo.Head()
+	if err != nil {
+		return nil, fmt.Errorf("unable to get HEAD: %w", err)
+	}
+
+	commit, err := gitRepo.CommitObject(ref.Hash())
+	if err != nil {
+		return nil, fmt.Errorf("unable to get HEAD commit object: %w", err)
+	}
+
+	commitIter, err := gitRepo.Log(&goGit.LogOptions{From: commit.Hash})
+	if err != nil {
+		return nil, fmt.Errorf("unable to create commit iterator: %w", err)
+	}
+	defer commitIter.Close()
+
+	for {
+		c, err := commitIter.Next()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				// Reached the end of history
+				break
+			}
+			return nil, fmt.Errorf("error iterating commits: %w", err)
+		}
+
+		commitHash := c.Hash.String()
+
+		// Stop if we reached the boundary commit
+		if boundaryCommit != "" && commitHash == boundaryCommit {
+			g.logger.Debug(fmt.Sprintf("Reached boundary commit %q, stopping search", boundaryCommit))
+			break
+		}
+
+		// Verify commit signatures
+		err = trdlGit.VerifyCommitSignatures(gitRepo, commitHash, trustedPGPPublicKeys, config.RequiredNumberOfVerifiedSignaturesOnCommit, g.logger)
+		if err != nil {
+			g.logger.Debug(fmt.Sprintf("Commit %q does not have required signatures: %s", commitHash, err.Error()))
+			continue
+		}
+
+		// Found a commit with required signatures
+		g.logger.Info(fmt.Sprintf("Found signed commit: %q", commitHash))
+		return &commitHash, nil
+	}
+
+	// No signed commit found
+	g.logger.Debug("No signed commit found in the search range")
+	return nil, nil
 }
 
 // cloneGit clones specified repo, checkout specified branch and return head commit of branch
@@ -106,79 +149,6 @@ func (g gitService) cloneGit(gitRepoUrl, gitBranch string) (*goGit.Repository, g
 	headCommit := r.Hash().String()
 	g.logger.Debug(fmt.Sprintf("Got head commit: %s", headCommit))
 	return gitRepo, headCommit, nil
-}
-
-// EdgeCommit returns last_proceeded_commit
-func (g gitService) EdgeCommit(initialLastSuccessfulCommit gitCommitHash, edgeCommit gitCommitHash) gitCommitHash {
-	result := edgeCommit
-	if edgeCommit == "" {
-		result = initialLastSuccessfulCommit
-	}
-
-	g.logger.Debug(fmt.Sprintf("Edge commit: %s", result))
-	return result
-}
-
-// collectCommitsFrom collects commits from commit (not includes it) and check is they are descendant
-func collectCommitsFromSomeTillHead(gitRepo *goGit.Repository, edgeCommit gitCommitHash) ([]*gitCommitHash, error) {
-	ref, err := gitRepo.Head()
-	if err != nil {
-		return nil, err
-	}
-	headCommit := ref.Hash().String()
-
-	if edgeCommit != "" {
-		isAncestor, err := trdlGit.IsAncestor(gitRepo, edgeCommit, headCommit)
-		if err != nil {
-			return nil, err
-		}
-
-		if !isAncestor {
-			return nil, fmt.Errorf("git commit %q is not descendant of the commit %q", headCommit, edgeCommit)
-		}
-	}
-
-	commit, err := gitRepo.CommitObject(ref.Hash())
-	if err != nil {
-		return nil, err
-	}
-
-	commitIter, err := gitRepo.Log(&goGit.LogOptions{From: commit.Hash})
-	if err != nil {
-		return nil, err
-	}
-
-	var result []*gitCommitHash
-	for c, err := commitIter.Next(); err == nil; c, err = commitIter.Next() {
-		if c.Hash.String() == edgeCommit {
-			break
-		}
-		commitHash := c.Hash.String()
-		result = append([]*gitCommitHash{&commitHash}, result...) // need reverse flow of commits
-	}
-
-	if err != nil && !errors.Is(err, io.EOF) {
-		return nil, err
-	}
-	return result, nil
-}
-
-// getFirstSignedCommit returns first commit signed with specified amount of signs
-func (g gitService) getFirstSignedCommit(gitRepo *goGit.Repository, commits []*gitCommitHash,
-	requiredNumberOfVerifiedSignaturesOnCommit int) (*gitCommitHash, error) {
-	trustedPGPPublicKeys, err := pgp.GetTrustedPGPPublicKeys(g.ctx, g.storage)
-	if err != nil {
-		return nil, fmt.Errorf("unable to get trusted public keys: %s", err)
-	}
-
-	for _, c := range commits {
-		err = trdlGit.VerifyCommitSignatures(gitRepo, *c, trustedPGPPublicKeys, requiredNumberOfVerifiedSignaturesOnCommit, g.logger)
-		if err != nil {
-			g.logger.Debug(fmt.Sprintf("checking commit signing: %s: %s", *c, err.Error()))
-		}
-		return c, nil
-	}
-	return nil, nil
 }
 
 func GetConfig(ctx context.Context, storage logical.Storage, logger hclog.Logger) (*Configuration, error) {

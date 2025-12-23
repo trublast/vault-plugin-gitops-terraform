@@ -74,8 +74,8 @@ func (b *backend) processCommit(ctx context.Context, storage logical.Storage, ha
 	// Explicitly set to nil to help GC
 	gitRepo = nil
 
-	// Store finished commit only after successful processing
-	return storeLastFinishedCommit(ctx, storage, hashCommit)
+	// Return nil on success - lastFinishedCommit will be saved by caller
+	return nil
 }
 
 // cloneRepositoryAtCommit clones repository and checks out to specific commit

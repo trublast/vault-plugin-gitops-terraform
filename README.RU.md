@@ -60,6 +60,14 @@ vault write gitops-terraform/configure/trusted_pgp_public_key name=key1 public_k
 vault write gitops-terraform/configure/trusted_pgp_public_key name=key2 public_key=@key2.pgp
 ```
 
+Настройка доступа плагина к API Vault
+
+*временное решение, токен нужно ротейтить*
+
+```bash
+vault write gitops-terraform/configure/vault vault_addr=http://127.0.0.1:8200 vault_token=hVs.12345678FdyitnrIpAW4Htcj
+```
+
 ## Подпись
 
 Установить [git-signatures](https://github.com/werf/3p-git-signatures)

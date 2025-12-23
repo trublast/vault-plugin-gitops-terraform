@@ -54,6 +54,22 @@ func (b *backend) processCommit(ctx context.Context, storage logical.Storage, ha
 		}
 	}
 
+	// Read auth role files from auth directory
+	authRoles, err := b.readAuthRoles(gitRepo)
+	if err != nil {
+		return fmt.Errorf("unable to read auth role files: %w", err)
+	}
+
+	if len(authRoles) == 0 {
+		b.Logger().Info("No auth role files found in auth directory, skipping auth role application")
+	} else {
+		b.Logger().Info(fmt.Sprintf("Found %d auth role files to apply", len(authRoles)))
+		// Apply auth roles to Vault
+		if err := b.applyAuthRolesToVault(ctx, storage, authRoles); err != nil {
+			return fmt.Errorf("unable to apply auth roles to Vault: %w", err)
+		}
+	}
+
 	// Cleanup: memory storage will be garbage collected when gitRepo goes out of scope
 	// Explicitly set to nil to help GC
 	gitRepo = nil
@@ -203,6 +219,131 @@ func (b *backend) applyPoliciesToVault(ctx context.Context, storage logical.Stor
 		}
 
 		b.Logger().Info(fmt.Sprintf("Successfully applied policy: %q", policyName))
+	}
+
+	return nil
+}
+
+// authRoleInfo contains information about an auth role
+type authRoleInfo struct {
+	AuthMethod string
+	RoleName   string
+	Content    []byte
+}
+
+// readAuthRoles reads all JSON role files from auth/{auth_method}/role/ directories
+func (b *backend) readAuthRoles(gitRepo *git.Repository) ([]authRoleInfo, error) {
+	var authRoles []authRoleInfo
+
+	err := trdlGit.ForEachWorktreeFile(gitRepo, func(filePath, link string, fileReader io.Reader, info os.FileInfo) error {
+		// Skip if not in auth directory
+		if !strings.HasPrefix(filePath, "auth/") {
+			return nil
+		}
+
+		// Skip directories and symlinks
+		if info.IsDir() || link != "" {
+			return nil
+		}
+
+		// Only process .json files in role subdirectories
+		// Expected pattern: auth/{auth_method}/role/{role_name}.json
+		if !strings.HasSuffix(filePath, ".json") {
+			return nil
+		}
+
+		// Check if path matches pattern auth/{auth_method}/role/{role_name}.json
+		pathParts := strings.Split(filePath, "/")
+		if len(pathParts) != 4 || pathParts[0] != "auth" || pathParts[2] != "role" {
+			return nil
+		}
+
+		authMethod := pathParts[1]
+		roleFileName := pathParts[3]
+		roleName := strings.TrimSuffix(roleFileName, ".json")
+
+		if roleName == "" {
+			return nil
+		}
+
+		// Read file content
+		content, err := io.ReadAll(fileReader)
+		if err != nil {
+			return fmt.Errorf("reading auth role file %q: %w", filePath, err)
+		}
+
+		// Validate JSON
+		var jsonData map[string]interface{}
+		if err := json.Unmarshal(content, &jsonData); err != nil {
+			return fmt.Errorf("invalid JSON in auth role file %q: %w", filePath, err)
+		}
+
+		authRoles = append(authRoles, authRoleInfo{
+			AuthMethod: authMethod,
+			RoleName:   roleName,
+			Content:    content,
+		})
+
+		b.Logger().Debug(fmt.Sprintf("Read auth role file: %q (auth_method: %q, role_name: %q)", filePath, authMethod, roleName))
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return authRoles, nil
+}
+
+// applyAuthRolesToVault sends auth roles to Vault API
+func (b *backend) applyAuthRolesToVault(ctx context.Context, storage logical.Storage, authRoles []authRoleInfo) error {
+	vaultConfig, err := vault_client.GetConfig(ctx, storage, b.Logger())
+	if err != nil {
+		return fmt.Errorf("unable to get vault client configuration: %w", err)
+	}
+
+	vaultAddr := vaultConfig.VaultAddr
+	if vaultAddr == "" {
+		return fmt.Errorf("vault_addr is not set in configuration")
+	}
+
+	vaultToken := vaultConfig.VaultToken
+	if vaultToken == "" {
+		return fmt.Errorf("vault_token is not set in configuration")
+	}
+
+	// Remove trailing slash from vaultAddr
+	vaultAddr = strings.TrimSuffix(vaultAddr, "/")
+
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	for _, roleInfo := range authRoles {
+		// Path format: /v1/auth/{auth_method}/role/{role_name}
+		url := fmt.Sprintf("%s/v1/auth/%s/role/%s", vaultAddr, roleInfo.AuthMethod, roleInfo.RoleName)
+
+		req, err := http.NewRequestWithContext(ctx, "PUT", url, bytes.NewBuffer(roleInfo.Content))
+		if err != nil {
+			return fmt.Errorf("creating request for auth role %q in %q: %w", roleInfo.RoleName, roleInfo.AuthMethod, err)
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Vault-Token", vaultToken)
+		req.Header.Set("X-Vault-Request", "true")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return fmt.Errorf("sending request for auth role %q in %q: %w", roleInfo.RoleName, roleInfo.AuthMethod, err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			body, _ := io.ReadAll(resp.Body)
+			return fmt.Errorf("vault API returned status %d for auth role %q in %q: %s", resp.StatusCode, roleInfo.RoleName, roleInfo.AuthMethod, string(body))
+		}
+
+		b.Logger().Info(fmt.Sprintf("Successfully applied auth role: %q in auth method %q", roleInfo.RoleName, roleInfo.AuthMethod))
 	}
 
 	return nil

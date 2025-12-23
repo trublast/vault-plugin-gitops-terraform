@@ -4,6 +4,14 @@
 
 The plugin monitors a git repository for new commits. When new commits are found that are signed with the required number of signatures, it applies the configuration.
 
+- Configuration is described in Terraform format.
+- Terraform state is stored in Vault.
+- Vault connection uses the address and token specified in the plugin configuration.
+- Currently requires a renewable periodic token that will be automatically renewed 24 hours before expiration.
+- Status and possible errors can be viewed via the `/v1/gitops-terraform/status` endpoint.
+- It's assumed that the plugin loads the configuration itself, but this isn't required; you can manage another Vault.
+- If you enable multiple plugins, you can manage different parts of the configuration accessible to the token from different repositories.
+
 ## Building
 
 ```bash
@@ -24,7 +32,7 @@ Add a repository to monitor
 
 ```bash
 vault write gitops-terraform/configure/git_repository \
-      git_repo_url="https://gitlab.com/user/private-repo.git" \
+      git_repo_url="https://gitlab.com/user/vault-gitops-configuration.git" \
       required_number_of_verified_signatures_on_commit=1 \
       git_poll_period=1m
 ```
@@ -58,16 +66,24 @@ vault write gitops-terraform/configure/trusted_pgp_public_key name=key1 public_k
 vault write gitops-terraform/configure/trusted_pgp_public_key name=key2 public_key=@key2.pgp
 ```
 
+Configuring plugin access to the Vault API
+
+*temporary solution, token needs to be rotated*
+
+```bash
+vault write gitops-terraform/configure/vault vault_addr=http://127.0.0.1:8200 vault_token=hVs.12345678FdyitnrIpAW4Htcj
+```
+
 ## Signing
 
 Install [git-signatures](https://github.com/werf/3p-git-signatures)
 *You can simply copy the bin/git-signatures file*
 
-Clone the repository
+Clone the repository or create new. See [example here](example-git)
 
 ```bash
-git clone https://gitlab.com/user/private-repo.git
-cd private-repo
+git clone https://gitlab.com/user/vault-gitops-configuration.git
+cd vault-gitops-configuration
 ```
 
 View the list of keys
@@ -113,21 +129,9 @@ git push origin main
 git signatures push
 ```
 
-Configuring plugin access to the Vault API
-
-*temporary solution, token needs to be rotated*
-
-```bash
-vault write gitops-terraform/configure/vault vault_addr=http://127.0.0.1:8200 vault_token=hVs.12345678FdyitnrIpAW4Htcj
-```
-
 ## Disabling the Plugin
 
 ```bash
 vault secrets disable gitops-terraform
 vault plugin deregister -version=v0.0.1 secret gitops-terraform
 ```
-
-## Terraform GIT repository example
-
-See [here](example-git)

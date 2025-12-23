@@ -2,7 +2,15 @@
 
 ⚠️ WORK IN PROGRESS
 
-Плагин мониторит git-репозиторий на наличие новых коммитов. При наличии новых коммитов, подписанных необходимым количеством подписей, применяет конфигурацию
+Плагин мониторит git-репозиторий на наличие новых коммитов. При наличии новых коммитов, подписанных необходимым количеством подписей, применяет конфигурацию.
+
+- Конфигурация описывается в формате Terraform.
+- Стейт Terraform сохраняется в Vault.
+- Для подключения к Vault используется адрес и токен, заданные в конфигурации плагина.
+- В данный момент для работы требуется обновляемый periodic токен, который будет автоматически продлевается за 24 часа до окончания срока действия.
+- Статус и возможные ошибки можно посмотреть через метод /v1/gitops-terraform/status.
+- Предполагается, что плагин загружает конфигурацию сам в себя, но это не обязательно, можно управлять другим Vault.
+- Если включить несколько плагинов, то можно из разный репозиториев управлять разными частями конфигурации, которые доступны токену.
 
 ## Сборка
 
@@ -24,7 +32,7 @@ vault secrets enable gitops-terraform
 
 ```bash
 vault write gitops-terraform/configure/git_repository \
-      git_repo_url="https://gitlab.com/user/private-repo.git" \
+      git_repo_url="https://gitlab.com/user/vault-gitops-configuration.git" \
       required_number_of_verified_signatures_on_commit=1 \
       git_poll_period=1m
 ```
@@ -71,11 +79,11 @@ vault write gitops-terraform/configure/vault vault_addr=http://127.0.0.1:8200 va
 Установить [git-signatures](https://github.com/werf/3p-git-signatures)
 *Можно просто скопировать файл bin/git-signatures*
 
-Скачать репозиторий
+Скачать ваш репозиторий конфигурацией или создать новый. Пример можно [посмотреть здесь](example-git)
 
 ```bash
-git clone https://gitlab.com/user/private-repo.git
-cd private-repo
+git clone https://gitlab.com/user/vault-gitops-configuration.git
+cd vault-gitops-configuration
 ```
 
 Посмотреть список ключей
@@ -127,7 +135,3 @@ git signatures push
 vault secrets disable gitops-terraform
 vault plugin deregister -version=v0.0.1 secret gitops-terraform
 ```
-
-## Пример Git репозитория с Terraform конфигурацией
-
-Можно посмотреть [здесь](example-git)

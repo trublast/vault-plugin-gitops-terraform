@@ -109,6 +109,7 @@ Expected output
 Push the changes
 
 ```bash
+git push origin main
 git signatures push
 ```
 
@@ -127,21 +128,6 @@ vault secrets disable gitops-terraform
 vault plugin deregister -version=v0.0.1 secret gitops-terraform
 ```
 
-# GIT Repository structure
+## Terraform GIT repository example
 
-```text
-/
-├── auth/
-│   ├── approle
-│   │   └── role
-│   │       ├── role1.json
-│   │       └── role2.json
-│   └── kube-cluster1
-│       └── role
-│           ├── kuberole1.json
-│           ├── kuberole2.json
-│           └── kuberole3.json
-└── policies/
-    ├── policy-1.hcl
-    └── policy-2.hcl
-```
+See [here](example-git)

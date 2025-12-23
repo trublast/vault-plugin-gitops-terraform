@@ -4,8 +4,6 @@
 
 Плагин мониторит git-репозиторий на наличие новых коммитов. При наличии новых коммитов, подписанных необходимым количеством подписей, применяет конфигурацию
 
-##
-
 ## Сборка
 
 ```bash
@@ -119,6 +117,7 @@ git signatures show
 Запушить изменения
 
 ```bash
+git push origin main
 git signatures push
 ```
 
@@ -129,21 +128,6 @@ vault secrets disable gitops-terraform
 vault plugin deregister -version=v0.0.1 secret gitops-terraform
 ```
 
-# Структура GIT репозитория
+## Пример Git репозитория с Terraform конфигурацией
 
-```text
-/
-├── auth/
-│   ├── approle
-│   │   └── role
-│   │       ├── role1.json
-│   │       └── role2.json
-│   └── kube-cluster1
-│       └── role
-│           ├── kuberole1.json
-│           ├── kuberole2.json
-│           └── kuberole3.json
-└── policies/
-    ├── policy-1.hcl
-    └── policy-2.hcl
-```
+Можно посмотреть [здесь](example-git)

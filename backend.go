@@ -9,6 +9,7 @@ import (
 	"github.com/trublast/vault-plugin-gitops-terraform/pkg/git"
 	"github.com/trublast/vault-plugin-gitops-terraform/pkg/git_repository"
 	"github.com/trublast/vault-plugin-gitops-terraform/pkg/pgp"
+	"github.com/trublast/vault-plugin-gitops-terraform/pkg/util"
 	"github.com/trublast/vault-plugin-gitops-terraform/pkg/vault_client"
 )
 
@@ -52,11 +53,37 @@ func newBackend(c *logical.BackendConfig) (*backend, error) {
 		vault_client.Paths(baseBackend),
 		git.CredentialsPaths(),
 		pgp.Paths(),
+		[]*framework.Path{
+			{
+				Pattern: "status",
+				Operations: map[logical.Operation]framework.OperationHandler{
+					logical.ReadOperation: &framework.PathOperation{
+						Callback: b.pathStatusRead,
+						Summary:  "Read the current status",
+					},
+				},
+			},
+		},
 	)
 
 	b.Backend = baseBackend
 
 	return b, nil
+}
+
+func (b *backend) pathStatusRead(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+	b.Logger().Debug("Reading git repository configuration...")
+
+	status, err := util.GetString(ctx, req.Storage, storageKeyProcessStatus)
+	if err != nil {
+		return logical.ErrorResponse("Unable to get status: %s", err), nil
+	}
+	lastFinishedCommit, err := util.GetString(ctx, req.Storage, storageKeyLastFinishedCommit)
+	if err != nil {
+		return logical.ErrorResponse("Unable to get commit: %s", err), nil
+	}
+
+	return &logical.Response{Data: map[string]interface{}{"status": status, "last_finished_commit": lastFinishedCommit}}, nil
 }
 
 func (b *backend) SetupBackend(ctx context.Context, config *logical.BackendConfig) error {

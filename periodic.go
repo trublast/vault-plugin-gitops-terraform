@@ -27,6 +27,7 @@ var (
 const (
 	storageKeyLastFinishedCommit = "last_finished_commit"
 	lastPeriodicRunTimestampKey  = "last_periodic_run_timestamp"
+	storageKeyProcessStatus      = "process_status"
 )
 
 func (b *backend) PeriodicTask(storage logical.Storage) error {
@@ -67,6 +68,10 @@ func (b *backend) processGit(ctx context.Context, storage logical.Storage, lastF
 
 	if commitHash == nil {
 		b.Logger().Debug("No signed commit found: finish periodic task")
+		// TODO: do not store status when already same status
+		if err := storeProcessStatusCommit(ctx, storage, "No new signed commit found"); err != nil {
+			return fmt.Errorf("unable to store process status commit: %w", err)
+		}
 		return updateLastRunTimeStamp(ctx, storage, newTimeStamp)
 	}
 
@@ -75,7 +80,12 @@ func (b *backend) processGit(ctx context.Context, storage logical.Storage, lastF
 	// Process commit directly (no task manager)
 	err = b.processCommit(ctx, storage, *commitHash)
 	if err != nil {
+		storeProcessStatusCommit(ctx, storage, fmt.Sprintf("FAILED processing commit %q: %s", *commitHash, err.Error()))
 		return fmt.Errorf("processing commit %q: %w", *commitHash, err)
+	}
+
+	if err := storeProcessStatusCommit(ctx, storage, fmt.Sprintf("Successfully processed commit %q", *commitHash)); err != nil {
+		return fmt.Errorf("unable to store process status commit: %w", err)
 	}
 
 	// Save last finished commit only if processCommit succeeded
@@ -107,4 +117,8 @@ func updateLastRunTimeStamp(ctx context.Context, storage logical.Storage, timeSt
 
 func storeLastFinishedCommit(ctx context.Context, storage logical.Storage, hashCommit string) error {
 	return util.PutString(ctx, storage, storageKeyLastFinishedCommit, hashCommit)
+}
+
+func storeProcessStatusCommit(ctx context.Context, storage logical.Storage, status string) error {
+	return util.PutString(ctx, storage, storageKeyProcessStatus, status)
 }

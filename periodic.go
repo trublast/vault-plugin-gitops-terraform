@@ -33,6 +33,12 @@ const (
 func (b *backend) PeriodicTask(storage logical.Storage) error {
 	ctx := context.Background()
 
+	// Check and update vault token expire time if needed (using vault_client functions)
+	if err := b.checkAndUpdateVaultTokenExpireTime(ctx, storage); err != nil {
+		b.Logger().Warn(fmt.Sprintf("Failed to check/update vault token expire time: %v", err))
+		// Don't fail the whole task, just log the error
+	}
+
 	// Get last finished commit
 	lastFinishedCommit, err := util.GetString(ctx, storage, storageKeyLastFinishedCommit)
 	if err != nil {

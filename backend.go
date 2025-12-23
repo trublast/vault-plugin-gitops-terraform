@@ -3,6 +3,8 @@ package gitops_terraform
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
@@ -15,6 +17,10 @@ import (
 
 type backend struct {
 	*framework.Backend
+
+	// Vault token expire time stored in memory (not in storage)
+	vaultTokenTTL         *vault_client.TokenTTL
+	vaultTokenExpireMutex sync.RWMutex
 }
 
 var _ logical.Factory = Factory
@@ -90,8 +96,88 @@ func (b *backend) SetupBackend(ctx context.Context, config *logical.BackendConfi
 	if err := b.Setup(ctx, config); err != nil {
 		return err
 	}
+	return nil
+}
+
+// initializeVaultTokenExpireTime performs lookup-self and stores expire time in backend
+func (b *backend) initializeVaultTokenTTL(ctx context.Context, storage logical.Storage) error {
+	vaultConfig, err := vault_client.GetValidConfig(ctx, storage, b.Logger())
+	if err != nil {
+		return fmt.Errorf("unable to get valid vault configuration: %w", err)
+	}
+
+	ttl, err := vault_client.LookupTokenSelf(ctx, vaultConfig, b.Logger())
+	if err != nil {
+		return fmt.Errorf("unable to lookup token: %w", err)
+	}
+
+	b.updateVaultTokenTTL(ttl)
+	b.Logger().Info(fmt.Sprintf("Initialized vault token expire time: %v", ttl.ExpireTime))
+	return nil
+}
+
+// checkAndUpdateVaultTokenExpireTime checks if expire time needs to be updated and renews token if needed
+func (b *backend) checkAndUpdateVaultTokenExpireTime(ctx context.Context, storage logical.Storage) error {
+	// Get current expire time from backend
+	ttl := b.getVaultTokenTTL()
+
+	if ttl == nil || ttl.ExpireTime.IsZero() {
+		// Expire time not initialized yet, try to initialize
+		return b.initializeVaultTokenTTL(ctx, storage)
+	}
+
+	// No updates needed if TTL is 0
+	if ttl.TTL == 0 {
+		return nil
+	}
+
+	// Check if token has already expired
+	if ttl.ExpireTime.Before(time.Now()) {
+		b.Logger().Warn(fmt.Sprintf("Token has already expired (expired at: %v), cannot renew", ttl.ExpireTime))
+		return nil
+	}
+
+	// Check if expire time is less than 24 hours from now
+	oneDay := 24 * time.Hour
+	remainingTime := time.Until(ttl.ExpireTime)
+
+	if remainingTime < oneDay {
+		b.Logger().Info(fmt.Sprintf("Token expire time is less than 24 hours (remaining: %v), renewing...", remainingTime))
+
+		// Get vault configuration
+		vaultConfig, err := vault_client.GetValidConfig(ctx, storage, b.Logger())
+		if err != nil {
+			return fmt.Errorf("unable to get valid vault configuration: %w", err)
+		}
+
+		// Renew token using vault_client function
+		newTTL, err := vault_client.RenewTokenSelf(ctx, vaultConfig, b.Logger())
+		if err != nil {
+			return fmt.Errorf("unable to renew token: %w", err)
+		}
+
+		// Update expire time in backend
+		b.updateVaultTokenTTL(newTTL)
+		b.Logger().Info(fmt.Sprintf("Token renewed successfully, new expire time: %v", newTTL.ExpireTime))
+	} else {
+		b.Logger().Debug(fmt.Sprintf("Token expire time is OK (remaining: %v)", remainingTime))
+	}
 
 	return nil
+}
+
+// updateVaultTokenExpireTime updates stored expire time (called after renew or lookup)
+func (b *backend) updateVaultTokenTTL(ttl *vault_client.TokenTTL) {
+	b.vaultTokenExpireMutex.Lock()
+	defer b.vaultTokenExpireMutex.Unlock()
+	b.vaultTokenTTL = ttl
+}
+
+// getVaultTokenExpireTime returns current expire time
+func (b *backend) getVaultTokenTTL() *vault_client.TokenTTL {
+	b.vaultTokenExpireMutex.RLock()
+	defer b.vaultTokenExpireMutex.RUnlock()
+	return b.vaultTokenTTL
 }
 
 const (

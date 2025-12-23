@@ -165,23 +165,13 @@ func (b *backend) readPolicyFiles(gitRepo *git.Repository) (map[string]string, e
 
 // applyPoliciesToVault sends policies to Vault API
 func (b *backend) applyPoliciesToVault(ctx context.Context, storage logical.Storage, policies map[string]string) error {
-	vaultConfig, err := vault_client.GetConfig(ctx, storage, b.Logger())
+	vaultConfig, err := vault_client.GetValidConfig(ctx, storage, b.Logger())
 	if err != nil {
-		return fmt.Errorf("unable to get vault client configuration: %w", err)
+		return fmt.Errorf("unable to get valid vault client configuration: %w", err)
 	}
 
-	vaultAddr := vaultConfig.VaultAddr
-	if vaultAddr == "" {
-		return fmt.Errorf("vault_addr is not set in configuration")
-	}
-
+	vaultAddr := strings.TrimSuffix(vaultConfig.VaultAddr, "/")
 	vaultToken := vaultConfig.VaultToken
-	if vaultToken == "" {
-		return fmt.Errorf("vault_token is not set in configuration")
-	}
-
-	// Remove trailing slash from vaultAddr
-	vaultAddr = strings.TrimSuffix(vaultAddr, "/")
 
 	client := &http.Client{
 		Timeout: 30 * time.Second,
@@ -297,23 +287,10 @@ func (b *backend) readAuthRoles(gitRepo *git.Repository) ([]authRoleInfo, error)
 
 // applyAuthRolesToVault sends auth roles to Vault API
 func (b *backend) applyAuthRolesToVault(ctx context.Context, storage logical.Storage, authRoles []authRoleInfo) error {
-	vaultConfig, err := vault_client.GetConfig(ctx, storage, b.Logger())
+	vaultConfig, err := vault_client.GetValidConfig(ctx, storage, b.Logger())
 	if err != nil {
 		return fmt.Errorf("unable to get vault client configuration: %w", err)
 	}
-
-	vaultAddr := vaultConfig.VaultAddr
-	if vaultAddr == "" {
-		return fmt.Errorf("vault_addr is not set in configuration")
-	}
-
-	vaultToken := vaultConfig.VaultToken
-	if vaultToken == "" {
-		return fmt.Errorf("vault_token is not set in configuration")
-	}
-
-	// Remove trailing slash from vaultAddr
-	vaultAddr = strings.TrimSuffix(vaultAddr, "/")
 
 	client := &http.Client{
 		Timeout: 30 * time.Second,
@@ -321,7 +298,7 @@ func (b *backend) applyAuthRolesToVault(ctx context.Context, storage logical.Sto
 
 	for _, roleInfo := range authRoles {
 		// Path format: /v1/auth/{auth_method}/role/{role_name}
-		url := fmt.Sprintf("%s/v1/auth/%s/role/%s", vaultAddr, roleInfo.AuthMethod, roleInfo.RoleName)
+		url := fmt.Sprintf("%s/v1/auth/%s/role/%s", vaultConfig.VaultAddr, roleInfo.AuthMethod, roleInfo.RoleName)
 
 		req, err := http.NewRequestWithContext(ctx, "PUT", url, bytes.NewBuffer(roleInfo.Content))
 		if err != nil {
@@ -329,7 +306,7 @@ func (b *backend) applyAuthRolesToVault(ctx context.Context, storage logical.Sto
 		}
 
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Vault-Token", vaultToken)
+		req.Header.Set("X-Vault-Token", vaultConfig.VaultToken)
 		req.Header.Set("X-Vault-Request", "true")
 
 		resp, err := client.Do(req)

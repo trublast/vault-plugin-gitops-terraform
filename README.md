@@ -71,7 +71,8 @@ Configuring plugin access to the Vault API
 *temporary solution, token needs to be rotated*
 
 ```bash
-vault write gitops-terraform/configure/vault vault_addr=http://127.0.0.1:8200 vault_token=hVs.12345678FdyitnrIpAW4Htcj
+TOKEN=$(vault token create -orphan -period=7d -policy=root -display-name="gitops-plugin" -field=token)
+vault write gitops-terraform/configure/vault vault_addr=http://127.0.0.1:8200 vault_token=$TOKEN
 ```
 
 ## Signing

@@ -71,7 +71,8 @@ vault write gitops-terraform/configure/trusted_pgp_public_key name=key2 public_k
 *временное решение, токен нужно ротейтить*
 
 ```bash
-vault write gitops-terraform/configure/vault vault_addr=http://127.0.0.1:8200 vault_token=hVs.12345678FdyitnrIpAW4Htcj
+TOKEN=$(vault token create -orphan -period=7d -policy=root -display-name="gitops-plugin" -field=token)
+vault write gitops-terraform/configure/vault vault_addr=http://127.0.0.1:8200 vault_token=$TOKEN
 ```
 
 ## Подпись

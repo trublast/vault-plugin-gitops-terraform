@@ -95,6 +95,7 @@ func (b *backend) pathConfigureCreateOrUpdate(ctx context.Context, req *logical.
 	b.Logger().Debug("Vault client configuration started...")
 
 	vaultAddr := fields.Get(FieldNameVaultAddr).(string)
+	vaultAddr = strings.TrimSuffix(vaultAddr, "/")
 	if vaultAddr == "" {
 		return logical.ErrorResponse("%q field value should not be empty", FieldNameVaultAddr), nil
 	}
@@ -118,11 +119,6 @@ func (b *backend) pathConfigureCreateOrUpdate(ctx context.Context, req *logical.
 	} else {
 		// Use provided token (or empty for CREATE if not provided)
 		config.VaultToken = vaultToken
-	}
-
-	{
-		cfgData, cfgErr := json.MarshalIndent(config, "", "  ")
-		b.Logger().Debug(fmt.Sprintf("Got Configuration (err=%v):\n%s", cfgErr, string(cfgData)))
 	}
 
 	if err := putConfiguration(ctx, req.Storage, config); err != nil {
@@ -209,7 +205,6 @@ func GetConfig(ctx context.Context, storage logical.Storage, logger hclog.Logger
 // GetValidConfig returns the configuration only if all validations pass (config exists, vault_addr and vault_token are set)
 func GetValidConfig(ctx context.Context, storage logical.Storage, logger hclog.Logger) (*Configuration, error) {
 	config, err := GetConfig(ctx, storage, logger)
-	config.VaultAddr = strings.TrimSuffix(config.VaultAddr, "/")
 	if err != nil {
 		return nil, err
 	}

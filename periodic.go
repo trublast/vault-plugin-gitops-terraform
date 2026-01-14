@@ -45,7 +45,11 @@ func (b *backend) PeriodicTask(storage logical.Storage) error {
 		return fmt.Errorf("unable to get last finished commit: %w", err)
 	}
 
-	return b.processGit(ctx, storage, lastFinishedCommit)
+	if err := b.processGit(ctx, storage, lastFinishedCommit); err != nil {
+		b.Logger().Warn(fmt.Sprintf("Cant process gitops task: %v", err))
+	}
+
+	return nil
 }
 
 func (b *backend) processGit(ctx context.Context, storage logical.Storage, lastFinishedCommit string) error {

@@ -138,7 +138,7 @@ func createProviderConfig(targetDir string, config CLIConfig) error {
   required_providers {
     vault = {
       source  = "hashicorp/vault"
-      version = ">= 5.6.0"
+      version = "~> 1.0"
     }
   }
 }
@@ -167,6 +167,12 @@ variable "plugin_vault_token" {
 
 // setupTerraformConfigFile checks for .terraformrc in workDir and sets TF_CLI_CONFIG_FILE env var if found
 func setupTerraformConfigFile(workDir string, cmd *exec.Cmd) {
+	tfConfig := os.Getenv("TF_CLI_CONFIG_FILE")
+	// Env exists, use env value
+	if tfConfig != "" {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("TF_CLI_CONFIG_FILE=%s", tfConfig))
+		return
+	}
 	terraformrcPath := filepath.Join(workDir, ".terraformrc")
 	if _, err := os.Stat(terraformrcPath); err == nil {
 		// File exists, set environment variable

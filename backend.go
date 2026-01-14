@@ -101,7 +101,7 @@ func (b *backend) SetupBackend(ctx context.Context, config *logical.BackendConfi
 
 // initializeVaultTokenExpireTime performs lookup-self and stores expire time in backend
 func (b *backend) initializeVaultTokenTTL(ctx context.Context, storage logical.Storage) error {
-	vaultConfig, err := vault_client.GetValidConfig(ctx, storage, b.Logger())
+	vaultConfig, err := vault_client.GetValidConfig(ctx, storage)
 	if err != nil {
 		return fmt.Errorf("unable to get valid vault configuration: %w", err)
 	}
@@ -118,6 +118,13 @@ func (b *backend) initializeVaultTokenTTL(ctx context.Context, storage logical.S
 
 // checkAndUpdateVaultTokenExpireTime checks if expire time needs to be updated and renews token if needed
 func (b *backend) checkAndUpdateVaultTokenExpireTime(ctx context.Context, storage logical.Storage) error {
+
+	// Get vault configuration
+	vaultConfig, err := vault_client.GetValidConfig(ctx, storage)
+	if err != nil {
+		return fmt.Errorf("unable to get valid vault configuration: %w", err)
+	}
+
 	// Get current expire time from backend
 	ttl := b.getVaultTokenTTL()
 
@@ -143,12 +150,6 @@ func (b *backend) checkAndUpdateVaultTokenExpireTime(ctx context.Context, storag
 
 	if remainingTime < oneDay {
 		b.Logger().Info(fmt.Sprintf("Token expire time is less than 24 hours (remaining: %v), renewing...", remainingTime))
-
-		// Get vault configuration
-		vaultConfig, err := vault_client.GetValidConfig(ctx, storage, b.Logger())
-		if err != nil {
-			return fmt.Errorf("unable to get valid vault configuration: %w", err)
-		}
 
 		// Renew token using vault_client function
 		newTTL, err := vault_client.RenewTokenSelf(ctx, vaultConfig, b.Logger())

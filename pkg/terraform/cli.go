@@ -62,11 +62,6 @@ func ApplyTerraformFromRepo(ctx context.Context, gitRepo *git.Repository, config
 		return nil
 	}
 
-	// Create provider configuration
-	if err := createProviderConfig(tmpDir, config); err != nil {
-		return fmt.Errorf("creating provider configuration: %w", err)
-	}
-
 	// Load terraform state from storage if it exists
 	if err := loadTerraformState(ctx, tmpDir, config); err != nil {
 		return fmt.Errorf("loading terraform state: %w", err)
@@ -132,39 +127,6 @@ func extractTerraformFiles(gitRepo *git.Repository, targetDir string, logger hcl
 	return tfFiles, nil
 }
 
-// createProviderConfig creates provider.tf file with vault provider configuration
-func createProviderConfig(targetDir string, config CLIConfig) error {
-	providerConfig := fmt.Sprintf(`terraform {
-  required_providers {
-    vault = {
-      source  = "hashicorp/vault"
-      version = "~> 1.0"
-    }
-  }
-}
-
-provider "vault" {
-  address = var.plugin_vault_addr
-  token   = var.plugin_vault_token
-}
-variable "plugin_vault_addr" {
-  type = string
-}
-
-variable "plugin_vault_token" {
-  type = string
-}
-`)
-
-	providerPath := filepath.Join(targetDir, "provider.tf")
-	if err := os.WriteFile(providerPath, []byte(providerConfig), 0644); err != nil {
-		return fmt.Errorf("writing provider.tf: %w", err)
-	}
-
-	config.Logger.Debug("Created provider.tf with vault configuration")
-	return nil
-}
-
 // setupTerraformConfigFile checks for .terraformrc in workDir and sets TF_CLI_CONFIG_FILE env var if found
 func setupTerraformConfigFile(workDir string, cmd *exec.Cmd) {
 	tfConfig := os.Getenv("TF_CLI_CONFIG_FILE")
@@ -217,8 +179,12 @@ func runTerraformPlan(ctx context.Context, workDir string, config CLIConfig) err
 
 	// Copy existing environment variables
 	cmd.Env = os.Environ()
-	cmd.Env = append(cmd.Env, fmt.Sprintf("TF_VAR_plugin_vault_addr=%s", config.VaultAddr))
-	cmd.Env = append(cmd.Env, fmt.Sprintf("TF_VAR_plugin_vault_token=%s", config.VaultToken))
+	if config.VaultAddr != "" {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("VAULT_ADDR=%s", config.VaultAddr))
+	}
+	if config.VaultToken != "" {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("VAULT_TOKEN=%s", config.VaultToken))
+	}
 
 	// Setup terraform config file if exists
 	setupTerraformConfigFile(workDir, cmd)
@@ -249,8 +215,12 @@ func runTerraformApply(ctx context.Context, workDir string, config CLIConfig) er
 
 	// Copy existing environment variables
 	cmd.Env = os.Environ()
-	cmd.Env = append(cmd.Env, fmt.Sprintf("TF_VAR_plugin_vault_addr=%s", config.VaultAddr))
-	cmd.Env = append(cmd.Env, fmt.Sprintf("TF_VAR_plugin_vault_token=%s", config.VaultToken))
+	if config.VaultAddr != "" {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("VAULT_ADDR=%s", config.VaultAddr))
+	}
+	if config.VaultToken != "" {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("VAULT_TOKEN=%s", config.VaultToken))
+	}
 
 	// Setup terraform config file if exists
 	setupTerraformConfigFile(workDir, cmd)
@@ -306,7 +276,7 @@ func saveTerraformState(ctx context.Context, state []byte, config CLIConfig) err
 		return nil
 	}
 
-	if state == nil || len(state) == 0 {
+	if len(state) == 0 {
 		config.Logger.Debug("No terraform state to save")
 		return nil
 	}

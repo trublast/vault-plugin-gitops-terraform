@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -94,24 +95,27 @@ func (b *backend) pathConfigExistenceCheck(ctx context.Context, req *logical.Req
 func (b *backend) pathConfigureCreateOrUpdate(ctx context.Context, req *logical.Request, fields *framework.FieldData) (*logical.Response, error) {
 	b.Logger().Debug("Vault client configuration started...")
 
-	vaultAddr := fields.Get(FieldNameVaultAddr).(string)
-	vaultAddr = strings.TrimSuffix(vaultAddr, "/")
-	if vaultAddr == "" {
-		return logical.ErrorResponse("%q field value should not be empty", FieldNameVaultAddr), nil
-	}
-
 	// Get existing configuration for UPDATE operation
 	var existingConfig *Configuration
+
 	if req.Operation == logical.UpdateOperation {
 		existingConfig, _ = getConfiguration(ctx, req.Storage)
 	}
 
-	config := Configuration{
-		VaultAddr: vaultAddr,
-	}
+	config := Configuration{}
 
 	// For UPDATE: preserve existing token if new one is not provided
 	// For CREATE: use provided token or empty string
+	vaultAddr := fields.Get(FieldNameVaultAddr).(string)
+	vaultAddr = strings.TrimSuffix(vaultAddr, "/")
+	if req.Operation == logical.UpdateOperation && vaultAddr == "" && existingConfig != nil {
+		// Keep existing token if not provided in update
+		config.VaultAddr = existingConfig.VaultAddr
+	} else {
+		// Use provided token (or empty for CREATE if not provided)
+		config.VaultAddr = vaultAddr
+	}
+
 	vaultToken := fields.Get(FieldNameVaultToken).(string)
 	if req.Operation == logical.UpdateOperation && vaultToken == "" && existingConfig != nil {
 		// Keep existing token if not provided in update
@@ -130,7 +134,7 @@ func (b *backend) pathConfigureCreateOrUpdate(ctx context.Context, req *logical.
 func (b *backend) pathConfigureRead(ctx context.Context, req *logical.Request, _ *framework.FieldData) (*logical.Response, error) {
 	b.Logger().Debug("Reading vault client configuration...")
 
-	config, err := getConfiguration(ctx, req.Storage)
+	config, err := GetValidConfig(ctx, req.Storage)
 	if err != nil {
 		return logical.ErrorResponse("Unable to get Configuration: %s", err), nil
 	}
@@ -191,26 +195,30 @@ func deleteConfiguration(ctx context.Context, storage logical.Storage) error {
 }
 
 // GetConfig returns the configuration for use in other packages
-func GetConfig(ctx context.Context, storage logical.Storage, logger hclog.Logger) (*Configuration, error) {
+func GetConfig(ctx context.Context, storage logical.Storage) (*Configuration, error) {
 	config, err := getConfiguration(ctx, storage)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get Configuration: %w", err)
 	}
 	if config == nil {
-		return nil, fmt.Errorf("Configuration not set")
+		config = &Configuration{VaultAddr: "", VaultToken: ""}
 	}
 	return config, nil
 }
 
 // GetValidConfig returns the configuration only if all validations pass (config exists, vault_addr and vault_token are set)
-func GetValidConfig(ctx context.Context, storage logical.Storage, logger hclog.Logger) (*Configuration, error) {
-	config, err := GetConfig(ctx, storage, logger)
+func GetValidConfig(ctx context.Context, storage logical.Storage) (*Configuration, error) {
+	config, err := GetConfig(ctx, storage)
 	if err != nil {
 		return nil, err
 	}
 
 	if config.VaultAddr == "" {
-		return nil, fmt.Errorf("vault_addr is not set in configuration")
+		config.VaultAddr = os.Getenv("VAULT_ADDR")
+	}
+
+	if config.VaultAddr == "" {
+		config.VaultAddr = "http://127.0.0.1:8200"
 	}
 
 	if config.VaultToken == "" {

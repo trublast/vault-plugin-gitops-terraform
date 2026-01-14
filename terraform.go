@@ -25,16 +25,16 @@ func (b *backend) processCommit(ctx context.Context, storage logical.Storage, ha
 		return fmt.Errorf("unable to get git repository configuration: %w", err)
 	}
 
+	// Get vault client configuration
+	vaultConfig, err := vault_client.GetConfig(ctx, storage)
+	if err != nil {
+		return fmt.Errorf("unable to get vault configuration: %w", err)
+	}
+
 	// Clone repository and checkout to specific commit
 	gitRepo, err := b.cloneRepositoryAtCommit(ctx, storage, config, hashCommit)
 	if err != nil {
 		return fmt.Errorf("unable to clone repository at commit %q: %w", hashCommit, err)
-	}
-
-	// Get vault client configuration
-	vaultConfig, err := vault_client.GetValidConfig(ctx, storage, b.Logger())
-	if err != nil {
-		return fmt.Errorf("unable to get vault client configuration: %w", err)
 	}
 
 	// Apply terraform configuration from repository using CLI

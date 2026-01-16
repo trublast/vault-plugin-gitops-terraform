@@ -88,8 +88,20 @@ func (b *backend) pathStatusRead(ctx context.Context, req *logical.Request, data
 	if err != nil {
 		return logical.ErrorResponse("Unable to get commit: %s", err), nil
 	}
+	lastRunTimestamp, err := util.GetInt64(ctx, req.Storage, lastPeriodicRunTimestampKey)
+	if err != nil {
+		return logical.ErrorResponse("Unable to get run timastamp: %s", err), nil
+	}
+	last_run := "never"
+	if lastRunTimestamp > 0 {
+		last_run = time.Unix(lastRunTimestamp, 0).Format(time.RFC3339)
+	}
 
-	return &logical.Response{Data: map[string]interface{}{"status": status, "last_finished_commit": lastFinishedCommit}}, nil
+	return &logical.Response{Data: map[string]interface{}{
+		"status":               status,
+		"last_finished_commit": lastFinishedCommit,
+		"last_run":             last_run,
+	}}, nil
 }
 
 func (b *backend) SetupBackend(ctx context.Context, config *logical.BackendConfig) error {

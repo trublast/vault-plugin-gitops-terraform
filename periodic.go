@@ -69,6 +69,9 @@ func (b *backend) processGit(ctx context.Context, storage logical.Storage, lastF
 	}
 
 	newTimeStamp := systemClock.Now()
+	if err := updateLastRunTimeStamp(ctx, storage, newTimeStamp); err != nil {
+		return err
+	}
 
 	// Find first signed commit from HEAD backwards to lastFinishedCommit
 	commitHash, err := git_repository.GitService(ctx, storage, b.Logger()).FindFirstSignedCommitFromHead(lastFinishedCommit)
@@ -82,7 +85,7 @@ func (b *backend) processGit(ctx context.Context, storage logical.Storage, lastF
 		if err := storeProcessStatusCommit(ctx, storage, "No new signed commit found"); err != nil {
 			return fmt.Errorf("unable to store process status commit: %w", err)
 		}
-		return updateLastRunTimeStamp(ctx, storage, newTimeStamp)
+		return nil
 	}
 
 	b.Logger().Info("Found signed commit to process", "commitHash", *commitHash)
@@ -105,7 +108,7 @@ func (b *backend) processGit(ctx context.Context, storage logical.Storage, lastF
 
 	b.Logger().Info("Successfully processed commit", "commitHash", *commitHash)
 
-	return updateLastRunTimeStamp(ctx, storage, newTimeStamp)
+	return nil
 }
 
 // checkExceedingInterval returns true if more than interval were spent

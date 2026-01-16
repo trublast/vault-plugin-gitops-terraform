@@ -39,10 +39,11 @@ func (b *backend) processCommit(ctx context.Context, storage logical.Storage, ha
 
 	// Apply terraform configuration from repository using CLI
 	terraformConfig := terraform.CLIConfig{
-		VaultAddr:  vaultConfig.VaultAddr,
-		VaultToken: vaultConfig.VaultToken,
-		Storage:    storage,
-		Logger:     b.Logger(),
+		VaultAddr:      vaultConfig.VaultAddr,
+		VaultToken:     vaultConfig.VaultToken,
+		VaultNamespace: vaultConfig.VaultNamespace,
+		Storage:        storage,
+		Logger:         b.Logger(),
 	}
 
 	if err := terraform.ApplyTerraformFromRepo(ctx, gitRepo, terraformConfig); err != nil {

@@ -1,32 +1,32 @@
 package vault_client
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/hashicorp/go-hclog"
+	"github.com/hashicorp/vault/api"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
 const (
-	FieldNameVaultAddr  = "vault_addr"
-	FieldNameVaultToken = "vault_token"
+	FieldNameVaultAddr      = "vault_addr"
+	FieldNameVaultToken     = "vault_token"
+	FieldNameVaultNamespace = "vault_namespace"
 
 	StorageKeyConfiguration = "vault_client_configuration"
 )
 
 type Configuration struct {
-	VaultAddr  string `structs:"vault_addr" json:"vault_addr"`
-	VaultToken string `structs:"vault_token" json:"vault_token"`
+	VaultAddr      string `structs:"vault_addr" json:"vault_addr"`
+	VaultToken     string `structs:"vault_token" json:"vault_token"`
+	VaultNamespace string `structs:"vault_namespace" json:"vault_namespace"`
 }
 
 type backend struct {
@@ -49,11 +49,15 @@ func Paths(baseBackend *framework.Backend) []*framework.Path {
 			Fields: map[string]*framework.FieldSchema{
 				FieldNameVaultAddr: {
 					Type:        framework.TypeString,
-					Description: "Vault API address. Required for CREATE, UPDATE.",
+					Description: "Vault API address.",
 				},
 				FieldNameVaultToken: {
 					Type:        framework.TypeString,
-					Description: "Vault token for API access. Optional for UPDATE.",
+					Description: "Vault token for API access.",
+				},
+				FieldNameVaultNamespace: {
+					Type:        framework.TypeString,
+					Description: "Vault namespace for API access.",
 				},
 			},
 
@@ -123,6 +127,15 @@ func (b *backend) pathConfigureCreateOrUpdate(ctx context.Context, req *logical.
 	} else {
 		// Use provided token (or empty for CREATE if not provided)
 		config.VaultToken = vaultToken
+	}
+
+	vaultNamespace := fields.Get(FieldNameVaultNamespace).(string)
+	if req.Operation == logical.UpdateOperation && vaultNamespace == "" && existingConfig != nil {
+		// Keep existing namespace if not provided in update
+		config.VaultNamespace = existingConfig.VaultNamespace
+	} else {
+		// Use provided namespace (or empty for CREATE if not provided)
+		config.VaultNamespace = vaultNamespace
 	}
 
 	if err := putConfiguration(ctx, req.Storage, config); err != nil {
@@ -201,7 +214,7 @@ func GetConfig(ctx context.Context, storage logical.Storage) (*Configuration, er
 		return nil, fmt.Errorf("unable to get Configuration: %w", err)
 	}
 	if config == nil {
-		config = &Configuration{VaultAddr: "", VaultToken: ""}
+		config = &Configuration{VaultAddr: "", VaultToken: "", VaultNamespace: ""}
 	}
 	return config, nil
 }
@@ -225,6 +238,10 @@ func GetValidConfig(ctx context.Context, storage logical.Storage) (*Configuratio
 		return nil, fmt.Errorf("vault_token is not set in configuration")
 	}
 
+	if config.VaultNamespace == "" {
+		config.VaultNamespace = os.Getenv("VAULT_NAMESPACE")
+	}
+
 	return config, nil
 }
 
@@ -236,57 +253,31 @@ type TokenTTL struct {
 
 // LookupTokenSelf performs /auth/token/lookup-self API call and returns TTL
 func LookupTokenSelf(ctx context.Context, config *Configuration, logger hclog.Logger) (*TokenTTL, error) {
-
-	url := fmt.Sprintf("%s/v1/auth/token/lookup-self", config.VaultAddr)
-
-	client := &http.Client{
-		Timeout: 2 * time.Second,
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	client, err := api.NewClient(&api.Config{
+		Address: config.VaultAddr,
+		HttpClient: &http.Client{
+			Timeout: 2 * time.Second,
+		},
+	})
 	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
+		return nil, fmt.Errorf("creating vault client: %w", err)
 	}
 
-	req.Header.Set("X-Vault-Token", config.VaultToken)
+	client.SetToken(config.VaultToken)
+	if config.VaultNamespace != "" {
+		client.SetNamespace(config.VaultNamespace)
+	}
 
-	resp, err := client.Do(req)
+	secret, err := client.Auth().Token().RenewSelf(0)
 	if err != nil {
-		return nil, fmt.Errorf("sending request: %w", err)
+		return nil, fmt.Errorf("renewing token: %w", err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("vault API returned status %d: %s", resp.StatusCode, string(body))
+	if secret == nil || secret.Auth == nil {
+		return nil, errors.New("renew token response is empty")
 	}
 
-	var response struct {
-		Data struct {
-			TTL         int64  `json:"ttl"`
-			CreationTTL int64  `json:"creation_ttl"`
-			ExpireTime  string `json:"expire_time"`
-		} `json:"data"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return nil, errors.New("decoding auth/token/lookup-self response")
-	}
-
-	ttl := time.Duration(response.Data.TTL) * time.Second
-
-	var expireTime time.Time
-	if response.Data.ExpireTime != "" {
-		expireTime, err = time.Parse(time.RFC3339, response.Data.ExpireTime)
-		if err != nil {
-			// If expire_time parsing fails, calculate from TTL
-			expireTime = time.Now().Add(ttl)
-			logger.Debug(fmt.Sprintf("Failed to parse expire_time, calculated from TTL: %v", err))
-		}
-	} else {
-		// If expire_time is not provided, calculate from TTL
-		expireTime = time.Now().Add(ttl)
-	}
+	ttl := time.Duration(secret.Auth.LeaseDuration) * time.Second
+	expireTime := time.Now().Add(ttl)
 
 	logger.Info(fmt.Sprintf("Token TTL: %v, Expire time: %v", ttl, expireTime))
 
@@ -298,64 +289,31 @@ func LookupTokenSelf(ctx context.Context, config *Configuration, logger hclog.Lo
 
 // RenewTokenSelf performs /auth/token/renew-self API call and returns new TTL
 func RenewTokenSelf(ctx context.Context, config *Configuration, logger hclog.Logger) (*TokenTTL, error) {
-
-	url := fmt.Sprintf("%s/v1/auth/token/renew-self", config.VaultAddr)
-
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-	}
-
-	// Renew request body (empty body means use default increment)
-	requestBody := map[string]interface{}{}
-	jsonData, err := json.Marshal(requestBody)
+	client, err := api.NewClient(&api.Config{
+		Address: config.VaultAddr,
+		HttpClient: &http.Client{
+			Timeout: 5 * time.Second,
+		},
+	})
 	if err != nil {
-		return nil, fmt.Errorf("marshaling request: %w", err)
+		return nil, fmt.Errorf("creating vault client: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	client.SetToken(config.VaultToken)
+	if config.VaultNamespace != "" {
+		client.SetNamespace(config.VaultNamespace)
+	}
+
+	secret, err := client.Auth().Token().RenewSelf(0)
 	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
+		return nil, fmt.Errorf("renewing token: %w", err)
+	}
+	if secret == nil || secret.Auth == nil {
+		return nil, errors.New("renew token response is empty")
 	}
 
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Vault-Token", config.VaultToken)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("sending request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("vault API returned status %d when renewing token", resp.StatusCode)
-	}
-
-	var response struct {
-		Auth struct {
-			TTL         int64  `json:"lease_duration"`
-			CreationTTL int64  `json:"creation_ttl"`
-			ExpireTime  string `json:"expire_time"`
-		} `json:"auth"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return nil, errors.New("decoding auth/token/renew-self response")
-	}
-
-	ttl := time.Duration(response.Auth.TTL) * time.Second
-
-	var expireTime time.Time
-	if response.Auth.ExpireTime != "" {
-		expireTime, err = time.Parse(time.RFC3339, response.Auth.ExpireTime)
-		if err != nil {
-			// If expire_time parsing fails, calculate from TTL
-			expireTime = time.Now().Add(ttl)
-			logger.Debug(fmt.Sprintf("Failed to parse expire_time, calculated from TTL: %v", err))
-		}
-	} else {
-		// If expire_time is not provided, calculate from TTL
-		expireTime = time.Now().Add(ttl)
-	}
+	ttl := time.Duration(secret.Auth.LeaseDuration) * time.Second
+	expireTime := time.Now().Add(ttl)
 
 	logger.Info(fmt.Sprintf("Token renewed, new TTL: %v, Expire time: %v", ttl, expireTime))
 

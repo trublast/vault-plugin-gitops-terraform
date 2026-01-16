@@ -22,10 +22,11 @@ const (
 
 // CLIConfig contains configuration for terraform CLI execution
 type CLIConfig struct {
-	VaultAddr  string
-	VaultToken string
-	Storage    logical.Storage
-	Logger     hclog.Logger
+	VaultAddr      string
+	VaultToken     string
+	VaultNamespace string
+	Storage        logical.Storage
+	Logger         hclog.Logger
 }
 
 // ApplyTerraformFromRepo extracts terraform files from git repository and applies them using Terraform CLI
@@ -185,6 +186,9 @@ func runTerraformPlan(ctx context.Context, workDir string, config CLIConfig) err
 	if config.VaultToken != "" {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("VAULT_TOKEN=%s", config.VaultToken))
 	}
+	if config.VaultNamespace != "" {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("VAULT_NAMESPACE=%s", config.VaultNamespace))
+	}
 
 	// Setup terraform config file if exists
 	setupTerraformConfigFile(workDir, cmd)
@@ -221,7 +225,9 @@ func runTerraformApply(ctx context.Context, workDir string, config CLIConfig) er
 	if config.VaultToken != "" {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("VAULT_TOKEN=%s", config.VaultToken))
 	}
-
+	if config.VaultNamespace != "" {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("VAULT_NAMESPACE=%s", config.VaultNamespace))
+	}
 	// Setup terraform config file if exists
 	setupTerraformConfigFile(workDir, cmd)
 

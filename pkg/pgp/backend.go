@@ -41,7 +41,7 @@ func Paths() []*framework.Path {
 					Callback:    pathConfigureTrustedPGPPublicKeyCreateOrUpdate,
 				},
 				logical.UpdateOperation: &framework.PathOperation{
-					Description: "Add a trusted PGP public key",
+					Description: "Update a trusted PGP public key",
 					Callback:    pathConfigureTrustedPGPPublicKeyCreateOrUpdate,
 				},
 				logical.ReadOperation: &framework.PathOperation{
@@ -53,7 +53,7 @@ func Paths() []*framework.Path {
 					Callback:    pathConfigureTrustedPGPPublicKeyReadOrList,
 				},
 			},
-			ExistenceCheck: pathConfigExistenceCheck,
+			ExistenceCheck: pathKeyExistenceCheck,
 		},
 		{
 			Pattern:         "configure/trusted_pgp_public_key/" + framework.GenericNameRegex(fieldNameTrustedPGPPublicKeyName) + "$",
@@ -80,14 +80,14 @@ func Paths() []*framework.Path {
 					Callback:    pathConfigureTrustedPGPPublicKeyDelete,
 				},
 			},
-			ExistenceCheck: pathConfigExistenceCheck,
 		},
 	}
 }
 
-// pathConfigExistenceCheck verifies if the configuration exists.
-func pathConfigExistenceCheck(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
-	out, err := req.Storage.Get(ctx, req.Path)
+// pathKeyExistenceCheck verifies if the key exists.
+func pathKeyExistenceCheck(ctx context.Context, req *logical.Request, fields *framework.FieldData) (bool, error) {
+	name := fields.Get(fieldNameTrustedPGPPublicKeyName).(string)
+	out, err := req.Storage.Get(ctx, trustedPGPPublicKeyStorageKey(name))
 	if err != nil {
 		return false, fmt.Errorf("existence check failed: %w", err)
 	}

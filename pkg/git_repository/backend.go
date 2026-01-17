@@ -99,8 +99,8 @@ func Paths(baseBackend *framework.Backend) []*framework.Path {
 }
 
 // pathConfigExistenceCheck verifies if the configuration exists.
-func (b *backend) pathConfigExistenceCheck(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
-	out, err := req.Storage.Get(ctx, req.Path)
+func (b *backend) pathConfigExistenceCheck(ctx context.Context, req *logical.Request, fields *framework.FieldData) (bool, error) {
+	out, err := req.Storage.Get(ctx, StorageKeyConfiguration)
 	if err != nil {
 		return false, fmt.Errorf("existence check failed: %w", err)
 	}

@@ -58,8 +58,8 @@ func CredentialsPaths() []*framework.Path {
 }
 
 // pathConfigExistenceCheck verifies if the configuration exists.
-func pathConfigExistenceCheck(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
-	out, err := req.Storage.Get(ctx, req.Path)
+func pathConfigExistenceCheck(ctx context.Context, req *logical.Request, fields *framework.FieldData) (bool, error) {
+	out, err := req.Storage.Get(ctx, StorageKeyConfigurationGitCredential)
 	if err != nil {
 		return false, fmt.Errorf("existence check failed: %w", err)
 	}

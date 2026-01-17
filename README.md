@@ -2,13 +2,15 @@
 
 ⚠️ WORK IN PROGRESS
 
+[Russian version](README.RU.md)
+
 The plugin monitors a git repository for new commits. When new commits are found that are signed with the required number of signatures, it applies the configuration.
 
 - Configuration is described in Terraform format.
 - Terraform state is stored in Vault.
 - Vault connection uses the address and token specified in the plugin configuration.
 - Currently requires a renewable periodic token that will be automatically renewed 24 hours before expiration.
-- Status and possible errors can be viewed via the `/v1/gitops-terraform/status` endpoint.
+- Status and possible errors can be viewed via the `/v1/gitops/status` endpoint.
 - It's assumed that the plugin loads the configuration itself, but this isn't required; you can manage another Vault.
 - If you enable multiple plugins, you can manage different parts of the configuration accessible to the token from different repositories.
 

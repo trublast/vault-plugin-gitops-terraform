@@ -49,6 +49,7 @@ func (b *backend) processCommit(ctx context.Context, storage logical.Storage, ha
 		VaultToken:     vaultConfig.VaultToken,
 		VaultNamespace: vaultConfig.VaultNamespace,
 		TfPath:         tfConfig.TfPath,
+		TfBinary:       tfConfig.TfBinary,
 		Storage:        storage,
 		Logger:         b.Logger(),
 	}

@@ -26,6 +26,7 @@ type CLIConfig struct {
 	VaultToken     string
 	VaultNamespace string
 	TfPath         string
+	TfBinary       string
 	Storage        logical.Storage
 	Logger         hclog.Logger
 }
@@ -76,7 +77,7 @@ func ApplyTerraformFromRepo(ctx context.Context, gitRepo *git.Repository, config
 	}
 
 	// Run terraform init
-	if err := runTerraformInit(ctx, tfDir, config.Logger); err != nil {
+	if err := runTerraformInit(ctx, tfDir, config); err != nil {
 		return fmt.Errorf("terraform init: %w", err)
 	}
 
@@ -179,8 +180,9 @@ func setupTerraformConfigFile(workDir string, cmd *exec.Cmd) {
 }
 
 // runTerraformInit runs terraform init
-func runTerraformInit(ctx context.Context, workDir string, logger hclog.Logger) error {
-	cmd := exec.CommandContext(ctx, "terraform", "init", "-no-color", "-input=false")
+func runTerraformInit(ctx context.Context, workDir string, config CLIConfig) error {
+	tfBinary := getTfBinary(config)
+	cmd := exec.CommandContext(ctx, tfBinary, "init", "-no-color", "-input=false")
 	cmd.Dir = workDir
 	cmd.Stdout = os.Stdout
 
@@ -196,7 +198,7 @@ func runTerraformInit(ctx context.Context, workDir string, logger hclog.Logger) 
 	var stderrBuf strings.Builder
 	cmd.Stderr = &stderrBuf
 
-	logger.Info("Running terraform init...")
+	config.Logger.Info("Running terraform init...")
 	if err := cmd.Run(); err != nil {
 		stderr := strings.TrimSpace(stderrBuf.String())
 		if stderr != "" {
@@ -205,13 +207,14 @@ func runTerraformInit(ctx context.Context, workDir string, logger hclog.Logger) 
 		return fmt.Errorf("terraform init failed: %w", err)
 	}
 
-	logger.Info("Terraform init completed successfully")
+	config.Logger.Info("Terraform init completed successfully")
 	return nil
 }
 
 // runTerraformPlan runs terraform plan
 func runTerraformPlan(ctx context.Context, workDir string, config CLIConfig) error {
-	cmd := exec.CommandContext(ctx, "terraform", "plan", "-no-color", "-input=false", "-out=tfplan")
+	tfBinary := getTfBinary(config)
+	cmd := exec.CommandContext(ctx, tfBinary, "plan", "-no-color", "-input=false", "-out=tfplan")
 	cmd.Dir = workDir
 	cmd.Stdout = os.Stdout
 
@@ -252,7 +255,8 @@ func runTerraformPlan(ctx context.Context, workDir string, config CLIConfig) err
 // runTerraformApply runs terraform apply with the plan file and returns the state
 // State is returned even if apply failed, so it can be saved for debugging/recovery
 func runTerraformApply(ctx context.Context, workDir string, config CLIConfig) error {
-	cmd := exec.CommandContext(ctx, "terraform", "apply", "-no-color", "-input=false", "-auto-approve", "tfplan")
+	tfBinary := getTfBinary(config)
+	cmd := exec.CommandContext(ctx, tfBinary, "apply", "-no-color", "-input=false", "-auto-approve", "tfplan")
 	cmd.Dir = workDir
 	cmd.Stdout = os.Stdout
 
@@ -339,4 +343,12 @@ func saveTerraformState(ctx context.Context, state []byte, config CLIConfig) err
 
 	config.Logger.Info("Saved terraform state to storage")
 	return nil
+}
+
+// getTfBinary returns the terraform binary path from config, or "terraform" as default
+func getTfBinary(config CLIConfig) string {
+	if config.TfBinary != "" {
+		return config.TfBinary
+	}
+	return "terraform"
 }

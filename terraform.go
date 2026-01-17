@@ -74,6 +74,9 @@ func (b *backend) cloneRepositoryAtCommit(ctx context.Context, storage logical.S
 				Password: gitCredentials.Password,
 			}
 		}
+		if config.GitCACertificate != "" {
+			cloneOptions.CABundle = []byte(config.GitCACertificate)
+		}
 	}
 
 	gitRepo, err := trdlGit.CloneInMemory(config.GitRepoUrl, cloneOptions)

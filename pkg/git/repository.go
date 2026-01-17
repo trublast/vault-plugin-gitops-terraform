@@ -21,6 +21,7 @@ type CloneOptions struct {
 	ReferenceName     string
 	RecurseSubmodules git.SubmoduleRescursivity
 	Auth              transport.AuthMethod
+	CABundle          []byte
 }
 
 func CloneInMemory(url string, opts CloneOptions) (*git.Repository, error) {
@@ -46,6 +47,10 @@ func CloneInMemory(url string, opts CloneOptions) (*git.Repository, error) {
 
 		if opts.Auth != nil {
 			cloneOptions.Auth = opts.Auth
+		}
+
+		if len(opts.CABundle) > 0 {
+			cloneOptions.CABundle = opts.CABundle
 		}
 	}
 

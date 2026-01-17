@@ -8,22 +8,22 @@
 - Стейт Terraform сохраняется в Vault.
 - Для подключения к Vault используется адрес и токен, заданные в конфигурации плагина.
 - В данный момент для работы требуется обновляемый periodic токен, который будет автоматически продлевается за 24 часа до окончания срока действия.
-- Статус и возможные ошибки можно посмотреть через метод /v1/gitops-terraform/status.
+- Статус и возможные ошибки можно посмотреть через метод /v1/gitops/status.
 - Предполагается, что плагин загружает конфигурацию сам в себя, но это не обязательно, можно управлять другим Vault.
 - Если включить несколько плагинов, то можно из разный репозиториев управлять разными частями конфигурации, которые доступны токену.
 
 ## Сборка
 
 ```bash
-go build -o gitops-terraform cmd/gitops-terraform/main.go
+go build -o gitops cmd/gitops-terraform/main.go
 ```
 
 ## Загрузка плагина в Vault
 
 ```bash
-SHA=$(sha256sum $PWD/gitops-terraform | awk '{print $1;}')
-vault plugin register -command gitops-terraform -sha256 $SHA -version=v0.0.1 secret gitops-terraform
-vault secrets enable gitops-terraform
+SHA=$(sha256sum $PWD/gitops | awk '{print $1;}')
+vault plugin register -command gitops -sha256 $SHA -version=v0.0.1 secret gitops
+vault secrets enable gitops
 ```
 
 ## Настройка
@@ -31,7 +31,7 @@ vault secrets enable gitops-terraform
 Добавить репозиторий для мониторинга
 
 ```bash
-vault write gitops-terraform/configure/git_repository \
+vault write gitops/configure/git_repository \
       git_repo_url="https://gitlab.com/user/vault-gitops-configuration.git" \
       required_number_of_verified_signatures_on_commit=1 \
       git_poll_period=1m
@@ -40,7 +40,7 @@ vault write gitops-terraform/configure/git_repository \
 Если репозиторий приватный, настроить учетную запись для доступа
 
 ```bash
-vault write gitops-terraform/configure/git_credential \
+vault write gitops/configure/git_credential \
       username=token \
       password=glpat-EAEAEAEAEK4SmS7Xmh4XP3m86MQp1OjE0CA.00.000123456
 ```
@@ -62,8 +62,8 @@ gpg --armor --output key2.pgp --export key2
 Загрузить полученные ключи в Vault
 
 ```bash
-vault write gitops-terraform/configure/trusted_pgp_public_key name=key1 public_key=@key1.pgp
-vault write gitops-terraform/configure/trusted_pgp_public_key name=key2 public_key=@key2.pgp
+vault write gitops/configure/trusted_pgp_public_key name=key1 public_key=@key1.pgp
+vault write gitops/configure/trusted_pgp_public_key name=key2 public_key=@key2.pgp
 ```
 
 Настройка доступа плагина к API Vault
@@ -72,7 +72,7 @@ vault write gitops-terraform/configure/trusted_pgp_public_key name=key2 public_k
 
 ```bash
 TOKEN=$(vault token create -orphan -period=7d -policy=root -display-name="gitops-plugin" -field=token)
-vault write gitops-terraform/configure/vault vault_addr=http://127.0.0.1:8200 vault_token=$TOKEN
+vault write gitops/configure/vault vault_addr=http://127.0.0.1:8200 vault_token=$TOKEN
 ```
 
 ## Подпись
@@ -133,6 +133,6 @@ git signatures push
 ## Выключение плагина
 
 ```bash
-vault secrets disable gitops-terraform
-vault plugin deregister -version=v0.0.1 secret gitops-terraform
+vault secrets disable gitops
+vault plugin deregister -version=v0.0.1 secret gitops
 ```

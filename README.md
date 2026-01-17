@@ -15,15 +15,15 @@ The plugin monitors a git repository for new commits. When new commits are found
 ## Building
 
 ```bash
-go build -o gitops-terraform cmd/gitops-terraform/main.go
+go build -o gitops cmd/gitops-terraform/main.go
 ```
 
 ## Loading the Plugin into Vault
 
 ```bash
-SHA=$(sha256sum $PWD/gitops-terraform | awk '{print $1;}')
-vault plugin register -command gitops-terraform -sha256 $SHA -version=v0.0.1 secret gitops-terraform
-vault secrets enable gitops-terraform
+SHA=$(sha256sum $PWD/gitops | awk '{print $1;}')
+vault plugin register -command gitops -sha256 $SHA -version=v0.0.1 secret gitops
+vault secrets enable gitops
 ```
 
 ## Configuration
@@ -31,7 +31,7 @@ vault secrets enable gitops-terraform
 Add a repository to monitor
 
 ```bash
-vault write gitops-terraform/configure/git_repository \
+vault write gitops/configure/git_repository \
       git_repo_url="https://gitlab.com/user/vault-gitops-configuration.git" \
       required_number_of_verified_signatures_on_commit=1 \
       git_poll_period=1m
@@ -40,7 +40,7 @@ vault write gitops-terraform/configure/git_repository \
 If the repository is private, configure credentials for access
 
 ```bash
-vault write gitops-terraform/configure/git_credential \
+vault write gitops/configure/git_credential \
       username=token \
       password=glpat-EAEAEAEAEK4SmS7Xmh4XP3m86MQp1OjE0CA.00.000123456
 ```
@@ -62,8 +62,8 @@ gpg --armor --output key2.pgp --export key2
 Upload the obtained keys to Vault
 
 ```bash
-vault write gitops-terraform/configure/trusted_pgp_public_key name=key1 public_key=@key1.pgp
-vault write gitops-terraform/configure/trusted_pgp_public_key name=key2 public_key=@key2.pgp
+vault write gitops/configure/trusted_pgp_public_key name=key1 public_key=@key1.pgp
+vault write gitops/configure/trusted_pgp_public_key name=key2 public_key=@key2.pgp
 ```
 
 Configuring plugin access to the Vault API
@@ -72,7 +72,7 @@ Configuring plugin access to the Vault API
 
 ```bash
 TOKEN=$(vault token create -orphan -period=7d -policy=root -display-name="gitops-plugin" -field=token)
-vault write gitops-terraform/configure/vault vault_addr=http://127.0.0.1:8200 vault_token=$TOKEN
+vault write gitops/configure/vault vault_addr=http://127.0.0.1:8200 vault_token=$TOKEN
 ```
 
 ## Signing
@@ -133,6 +133,6 @@ git signatures push
 ## Disabling the Plugin
 
 ```bash
-vault secrets disable gitops-terraform
-vault plugin deregister -version=v0.0.1 secret gitops-terraform
+vault secrets disable gitops
+vault plugin deregister -version=v0.0.1 secret gitops
 ```

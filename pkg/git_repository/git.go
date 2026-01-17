@@ -32,7 +32,7 @@ func GitService(ctx context.Context, storage logical.Storage, logger hclog.Logge
 }
 
 // FindFirstSignedCommitFromHead searches for the first signed commit starting from HEAD
-// and going backwards until lastFinishedCommit (or initialLastSuccessfulCommit if lastFinishedCommit is empty).
+// and going backwards until lastFinishedCommit.
 // Returns the first commit that has the required number of verified signatures.
 func (g gitService) FindFirstSignedCommitFromHead(lastFinishedCommit gitCommitHash) (*gitCommitHash, error) {
 	config, err := GetConfig(g.ctx, g.storage, g.logger)
@@ -40,15 +40,12 @@ func (g gitService) FindFirstSignedCommitFromHead(lastFinishedCommit gitCommitHa
 		return nil, err
 	}
 
-	// Determine the boundary commit: use lastFinishedCommit if set, otherwise use initialLastSuccessfulCommit
+	// Determine the boundary commit: use lastFinishedCommit
 	boundaryCommit := lastFinishedCommit
-	if boundaryCommit == "" {
-		boundaryCommit = config.InitialLastSuccessfulCommit
-	}
 
 	// Clone git repository and get head commit
 	g.logger.Debug(fmt.Sprintf("Cloning git repo %q branch %q", config.GitRepoUrl, config.GitBranch))
-	gitRepo, headCommit, err := g.cloneGit(config.GitRepoUrl, config.GitBranch)
+	gitRepo, headCommit, err := g.cloneGit(config)
 	if err != nil {
 		return nil, fmt.Errorf("cloning repository: %w", err)
 	}
@@ -118,7 +115,7 @@ func (g gitService) FindFirstSignedCommitFromHead(lastFinishedCommit gitCommitHa
 }
 
 // cloneGit clones specified repo, checkout specified branch and return head commit of branch
-func (g gitService) cloneGit(gitRepoUrl, gitBranch string) (*goGit.Repository, gitCommitHash, error) {
+func (g gitService) cloneGit(config *Configuration) (*goGit.Repository, gitCommitHash, error) {
 	gitCredentials, err := trdlGit.GetGitCredential(g.ctx, g.storage)
 	if err != nil {
 		return nil, "", fmt.Errorf("unable to get Git credentials Configuration: %s", err)
@@ -126,7 +123,7 @@ func (g gitService) cloneGit(gitRepoUrl, gitBranch string) (*goGit.Repository, g
 
 	var cloneOptions trdlGit.CloneOptions
 	{
-		cloneOptions.BranchName = gitBranch
+		cloneOptions.BranchName = config.GitBranch
 		// cloneOptions.RecurseSubmodules = goGit.DefaultSubmoduleRecursionDepth //
 
 		if gitCredentials != nil && gitCredentials.Username != "" && gitCredentials.Password != "" {
@@ -135,10 +132,14 @@ func (g gitService) cloneGit(gitRepoUrl, gitBranch string) (*goGit.Repository, g
 				Password: gitCredentials.Password,
 			}
 		}
+
+		if config.GitCACertificate != "" {
+			cloneOptions.CABundle = []byte(config.GitCACertificate)
+		}
 	}
 
 	var gitRepo *goGit.Repository
-	if gitRepo, err = trdlGit.CloneInMemory(gitRepoUrl, cloneOptions); err != nil {
+	if gitRepo, err = trdlGit.CloneInMemory(config.GitRepoUrl, cloneOptions); err != nil {
 		return nil, "", fmt.Errorf("cloning in memeory: %w", err)
 	}
 

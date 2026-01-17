@@ -2,7 +2,6 @@ package git_repository
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -15,20 +14,20 @@ import (
 
 const (
 	FieldNameGitRepoUrl                                 = "git_repo_url"
+	FieldNameGitCACertificate                           = "git_ca_certificate"
 	FieldNameGitBranch                                  = "git_branch_name"
 	FieldNameGitPollPeriod                              = "git_poll_period"
 	FieldNameRequiredNumberOfVerifiedSignaturesOnCommit = "required_number_of_verified_signatures_on_commit"
-	FieldNameInitialLastSuccessfulCommit                = "initial_last_successful_commit"
 
 	StorageKeyConfiguration = "git_repository_configuration"
 )
 
 type Configuration struct {
 	GitRepoUrl                                 string        `structs:"git_repo_url" json:"git_repo_url"`
+	GitCACertificate                           string        `structs:"git_ca_certificate" json:"git_ca_certificate,omitempty"`
 	GitBranch                                  string        `structs:"git_branch_name" json:"git_branch_name"`
 	GitPollPeriod                              time.Duration `structs:"git_poll_period" json:"git_poll_period"`
 	RequiredNumberOfVerifiedSignaturesOnCommit int           `structs:"required_number_of_verified_signatures_on_commit" json:"required_number_of_verified_signatures_on_commit"`
-	InitialLastSuccessfulCommit                string        `structs:"initial_last_successful_commit" json:"initial_last_successful_commit"`
 }
 
 type backend struct {
@@ -51,7 +50,11 @@ func Paths(baseBackend *framework.Backend) []*framework.Path {
 			Fields: map[string]*framework.FieldSchema{
 				FieldNameGitRepoUrl: {
 					Type:        framework.TypeString,
-					Description: "Git repo URL. Required for CREATE, UPDATE.",
+					Description: "Git repo URL. Required for CREATE.",
+				},
+				FieldNameGitCACertificate: {
+					Type:        framework.TypeString,
+					Description: "Git CA. Default is empty.",
 				},
 				FieldNameGitBranch: {
 					Type:        framework.TypeString,
@@ -68,28 +71,24 @@ func Paths(baseBackend *framework.Backend) []*framework.Path {
 					Default:     0,
 					Description: "Verify that the commit has enough verified signatures",
 				},
-				FieldNameInitialLastSuccessfulCommit: {
-					Type:        framework.TypeString,
-					Description: "Last successful commit",
-				},
 			},
 
 			Operations: map[logical.Operation]framework.OperationHandler{
 				logical.CreateOperation: &framework.PathOperation{
 					Callback: b.pathConfigureCreateOrUpdate,
-					Summary:  "Create new flant_gitops git_repository configuration.",
+					Summary:  "Create new gitops git_repository configuration.",
 				},
 				logical.UpdateOperation: &framework.PathOperation{
 					Callback: b.pathConfigureCreateOrUpdate,
-					Summary:  "Update the current flant_gitops git_repository configuration.",
+					Summary:  "Update the current gitops git_repository configuration.",
 				},
 				logical.ReadOperation: &framework.PathOperation{
 					Callback: b.pathConfigureRead,
-					Summary:  "Read the current flant_gitops git_repository configuration.",
+					Summary:  "Read the current gitops git_repository configuration.",
 				},
 				logical.DeleteOperation: &framework.PathOperation{
 					Callback: b.pathConfigureDelete,
-					Summary:  "Delete the current flant_gitops git_repository configuration.",
+					Summary:  "Delete the current gitops git_repository configuration.",
 				},
 			},
 			ExistenceCheck:  b.pathConfigExistenceCheck,
@@ -112,24 +111,52 @@ func (b *backend) pathConfigExistenceCheck(ctx context.Context, req *logical.Req
 func (b *backend) pathConfigureCreateOrUpdate(ctx context.Context, req *logical.Request, fields *framework.FieldData) (*logical.Response, error) {
 	b.Logger().Debug("Git repository configuration started...")
 
-	config := Configuration{
-		GitRepoUrl:    fields.Get(FieldNameGitRepoUrl).(string),
-		GitBranch:     fields.Get(FieldNameGitBranch).(string),
-		GitPollPeriod: time.Duration(fields.Get(FieldNameGitPollPeriod).(int)) * time.Second,
-		RequiredNumberOfVerifiedSignaturesOnCommit: fields.Get(FieldNameRequiredNumberOfVerifiedSignaturesOnCommit).(int),
-		InitialLastSuccessfulCommit:                fields.Get(FieldNameInitialLastSuccessfulCommit).(string),
+	var config Configuration
+
+	if req.Operation == logical.UpdateOperation {
+		// For UPDATE: read existing configuration
+		existingConfig, err := getConfiguration(ctx, req.Storage)
+		if err != nil {
+			return logical.ErrorResponse("Unable to get existing configuration: %s", err), nil
+		}
+		if existingConfig == nil {
+			return logical.ErrorResponse("Configuration does not exist. Use CREATE operation to create it."), nil
+		}
+		// Start with existing configuration
+		config = *existingConfig
 	}
 
-	if config.GitRepoUrl == "" {
+	// Update only fields that were provided in the request
+	if gitRepoUrl, ok := fields.GetOk(FieldNameGitRepoUrl); ok {
+		config.GitRepoUrl = gitRepoUrl.(string)
+	}
+
+	if gitBranch, ok := fields.GetOk(FieldNameGitBranch); ok {
+		config.GitBranch = gitBranch.(string)
+	}
+
+	if gitCACertificate, ok := fields.GetOk(FieldNameGitCACertificate); ok {
+		config.GitCACertificate = gitCACertificate.(string)
+	}
+
+	if gitPollPeriod, ok := fields.GetOk(FieldNameGitPollPeriod); ok {
+		config.GitPollPeriod = time.Duration(gitPollPeriod.(int)) * time.Second
+	}
+
+	if requiredSignatures, ok := fields.GetOk(FieldNameRequiredNumberOfVerifiedSignaturesOnCommit); ok {
+		config.RequiredNumberOfVerifiedSignaturesOnCommit = requiredSignatures.(int)
+	}
+
+	// Validate GitRepoUrl for CREATE operation
+	if req.Operation == logical.CreateOperation && config.GitRepoUrl == "" {
 		return logical.ErrorResponse("%q field value should not be empty", FieldNameGitRepoUrl), nil
 	}
-	if _, err := transport.NewEndpoint(config.GitRepoUrl); err != nil {
-		return logical.ErrorResponse("%q field is invalid: %s", FieldNameGitRepoUrl, err), nil
-	}
 
-	{
-		cfgData, cfgErr := json.MarshalIndent(config, "", "  ")
-		b.Logger().Debug(fmt.Sprintf("Got Configuration (err=%v):\n%s", cfgErr, string(cfgData)))
+	// Validate GitRepoUrl if it was provided or is required
+	if config.GitRepoUrl != "" {
+		if _, err := transport.NewEndpoint(config.GitRepoUrl); err != nil {
+			return logical.ErrorResponse("%q field is invalid: %s", FieldNameGitRepoUrl, err), nil
+		}
 	}
 
 	if err := putConfiguration(ctx, req.Storage, config); err != nil {
@@ -206,13 +233,13 @@ func configurationStructToMap(config *Configuration) map[string]interface{} {
 
 const (
 	configureHelpSyn = `
-Git repository configuration of the flant_gitops backend.
+Git repository configuration of the gitops backend.
 `
 	configureHelpDesc = `
-The flant_gitops periodic function performs periodic run of configured command
+The gitops periodic function performs periodic run of configured command
 when a new commit arrives into the configured git repository.
 
-This is git repository configuration for the flant_gitops plugin. Plugin will not
+This is git repository configuration for the gitops plugin. Plugin will not
 function when Configuration is not set.
 `
 )

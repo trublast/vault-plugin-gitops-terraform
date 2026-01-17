@@ -25,6 +25,7 @@ type CLIConfig struct {
 	VaultAddr      string
 	VaultToken     string
 	VaultNamespace string
+	TfPath         string
 	Storage        logical.Storage
 	Logger         hclog.Logger
 }
@@ -41,7 +42,7 @@ func ApplyTerraformFromRepo(ctx context.Context, gitRepo *git.Repository, config
 	defer func() {
 
 		// Save state before removing directory
-		statePath := filepath.Join(tmpDir, "terraform.tfstate")
+		statePath := filepath.Join(tmpDir, config.TfPath, "terraform.tfstate")
 		if stateData, readErr := os.ReadFile(statePath); readErr == nil && len(stateData) > 0 {
 			if saveErr := saveTerraformState(ctx, stateData, config); saveErr != nil {
 				config.Logger.Warn(fmt.Sprintf("Failed to save terraform state: %v", saveErr))
@@ -62,24 +63,30 @@ func ApplyTerraformFromRepo(ctx context.Context, gitRepo *git.Repository, config
 		config.Logger.Info("No terraform files found in repository")
 		return nil
 	}
+	tfDir := filepath.Join(tmpDir, config.TfPath)
+
+	fileInfo, err := os.Stat(tfDir)
+	if err != nil || !fileInfo.IsDir() {
+		return fmt.Errorf("%q is not a directory", tfDir)
+	}
 
 	// Load terraform state from storage if it exists
-	if err := loadTerraformState(ctx, tmpDir, config); err != nil {
+	if err := loadTerraformState(ctx, tfDir, config); err != nil {
 		return fmt.Errorf("loading terraform state: %w", err)
 	}
 
 	// Run terraform init
-	if err := runTerraformInit(ctx, tmpDir, config.Logger); err != nil {
+	if err := runTerraformInit(ctx, tfDir, config.Logger); err != nil {
 		return fmt.Errorf("terraform init: %w", err)
 	}
 
 	// Run terraform plan
-	if err := runTerraformPlan(ctx, tmpDir, config); err != nil {
+	if err := runTerraformPlan(ctx, tfDir, config); err != nil {
 		return fmt.Errorf("terraform plan: %w", err)
 	}
 
 	// Run terraform apply
-	if err := runTerraformApply(ctx, tmpDir, config); err != nil {
+	if err := runTerraformApply(ctx, tfDir, config); err != nil {
 		return fmt.Errorf("terraform apply: %w", err)
 	}
 
@@ -100,7 +107,7 @@ func extractTerraformFiles(gitRepo *git.Repository, targetDir string, logger hcl
 		targetPath := filepath.Join(targetDir, filePath)
 
 		// Create directory structure
-		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0700); err != nil {
 			return fmt.Errorf("creating directory for %q: %w", filePath, err)
 		}
 
@@ -155,6 +162,8 @@ func runTerraformInit(ctx context.Context, workDir string, logger hclog.Logger) 
 	// Setup terraform config file if exists
 	setupTerraformConfigFile(workDir, cmd)
 
+	cmd.Env = append(cmd.Env, "TF_IN_AUTOMATION=true")
+
 	// Capture stderr to get error details
 	var stderrBuf strings.Builder
 	cmd.Stderr = &stderrBuf
@@ -192,6 +201,8 @@ func runTerraformPlan(ctx context.Context, workDir string, config CLIConfig) err
 
 	// Setup terraform config file if exists
 	setupTerraformConfigFile(workDir, cmd)
+
+	cmd.Env = append(cmd.Env, "TF_IN_AUTOMATION=true")
 
 	// Capture stderr to get error details
 	var stderrBuf strings.Builder
@@ -231,6 +242,8 @@ func runTerraformApply(ctx context.Context, workDir string, config CLIConfig) er
 	// Setup terraform config file if exists
 	setupTerraformConfigFile(workDir, cmd)
 
+	cmd.Env = append(cmd.Env, "TF_IN_AUTOMATION=true")
+
 	// Capture stderr to get error details
 	var stderrBuf strings.Builder
 	cmd.Stderr = &stderrBuf
@@ -267,7 +280,7 @@ func loadTerraformState(ctx context.Context, workDir string, config CLIConfig) e
 
 	// Write state file to workDir
 	statePath := filepath.Join(workDir, "terraform.tfstate")
-	if err := os.WriteFile(statePath, entry.Value, 0644); err != nil {
+	if err := os.WriteFile(statePath, entry.Value, 0600); err != nil {
 		return fmt.Errorf("writing terraform state file: %w", err)
 	}
 

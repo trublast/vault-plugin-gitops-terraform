@@ -11,6 +11,7 @@ import (
 	"github.com/trublast/vault-plugin-gitops-terraform/pkg/git"
 	"github.com/trublast/vault-plugin-gitops-terraform/pkg/git_repository"
 	"github.com/trublast/vault-plugin-gitops-terraform/pkg/pgp"
+	"github.com/trublast/vault-plugin-gitops-terraform/pkg/terraform"
 	"github.com/trublast/vault-plugin-gitops-terraform/pkg/util"
 	"github.com/trublast/vault-plugin-gitops-terraform/pkg/vault_client"
 )
@@ -57,6 +58,7 @@ func newBackend(c *logical.BackendConfig) (*backend, error) {
 	baseBackend.Paths = framework.PathAppend(
 		git_repository.Paths(baseBackend),
 		vault_client.Paths(baseBackend),
+		terraform.Paths(baseBackend),
 		git.CredentialsPaths(),
 		pgp.Paths(),
 		[]*framework.Path{

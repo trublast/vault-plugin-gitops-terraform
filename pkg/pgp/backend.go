@@ -44,13 +44,9 @@ func Paths() []*framework.Path {
 					Description: "Update a trusted PGP public key",
 					Callback:    pathConfigureTrustedPGPPublicKeyCreateOrUpdate,
 				},
-				logical.ReadOperation: &framework.PathOperation{
-					Description: "Get the list of trusted PGP public keys",
-					Callback:    pathConfigureTrustedPGPPublicKeyReadOrList,
-				},
 				logical.ListOperation: &framework.PathOperation{
 					Description: "Get the list of trusted PGP public keys",
-					Callback:    pathConfigureTrustedPGPPublicKeyReadOrList,
+					Callback:    pathConfigureTrustedPGPPublicKeyList,
 				},
 			},
 			ExistenceCheck: pathKeyExistenceCheck,
@@ -68,10 +64,6 @@ func Paths() []*framework.Path {
 			},
 			Operations: map[logical.Operation]framework.OperationHandler{
 				logical.ReadOperation: &framework.PathOperation{
-					Description: "Get the trusted PGP public key",
-					Callback:    pathConfigureTrustedPGPPublicKeyRead,
-				},
-				logical.ListOperation: &framework.PathOperation{
 					Description: "Get the trusted PGP public key",
 					Callback:    pathConfigureTrustedPGPPublicKeyRead,
 				},
@@ -117,7 +109,7 @@ func pathConfigureTrustedPGPPublicKeyCreateOrUpdate(ctx context.Context, req *lo
 	return nil, nil
 }
 
-func pathConfigureTrustedPGPPublicKeyReadOrList(ctx context.Context, req *logical.Request, _ *framework.FieldData) (*logical.Response, error) {
+func pathConfigureTrustedPGPPublicKeyList(ctx context.Context, req *logical.Request, _ *framework.FieldData) (*logical.Response, error) {
 	list, err := req.Storage.List(ctx, storageKeyPrefixTrustedPGPPublicKey)
 	if err != nil {
 		return nil, fmt.Errorf("unable to list %q in storage: %w", storageKeyPrefixTrustedPGPPublicKey, err)

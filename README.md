@@ -62,8 +62,8 @@ gpg --armor --output key2.pgp --export key2
 Upload the obtained keys to Vault
 
 ```bash
-vault write gitops/configure/trusted_pgp_public_key name=key1 public_key=@key1.pgp
-vault write gitops/configure/trusted_pgp_public_key name=key2 public_key=@key2.pgp
+vault write gitops/configure/trusted_pgp_public_key/key1 public_key=@key1.pgp
+vault write gitops/configure/trusted_pgp_public_key/key2 public_key=@key2.pgp
 ```
 
 Configuring plugin access to the Vault API

@@ -54,7 +54,7 @@ func ApplyTerraformFromRepo(ctx context.Context, gitRepo *git.Repository, config
 	config.Logger.Debug(fmt.Sprintf("Created temporary directory for terraform: %q", tmpDir))
 
 	// Extract terraform files from repository
-	tfFiles, err := extractTerraformFiles(gitRepo, tmpDir, config.Logger)
+	tfFiles, err := extractTerraformFiles(gitRepo, tmpDir, config.TfPath, config.Logger)
 	if err != nil {
 		return fmt.Errorf("extracting terraform files: %w", err)
 	}
@@ -94,8 +94,14 @@ func ApplyTerraformFromRepo(ctx context.Context, gitRepo *git.Repository, config
 }
 
 // extractTerraformFiles extracts .tf and .hcl files from git repository to temporary directory
-func extractTerraformFiles(gitRepo *git.Repository, targetDir string, logger hclog.Logger) ([]string, error) {
+func extractTerraformFiles(gitRepo *git.Repository, targetDir string, tfPath string, logger hclog.Logger) ([]string, error) {
 	var tfFiles []string
+
+	// Normalize tfPath for comparison
+	normalizedTfPath := filepath.Clean(tfPath)
+	if normalizedTfPath == "." {
+		normalizedTfPath = ""
+	}
 
 	err := trdlGit.ForEachWorktreeFile(gitRepo, func(filePath, link string, fileReader io.Reader, info os.FileInfo) error {
 		// Skip directories and symlinks
@@ -103,8 +109,30 @@ func extractTerraformFiles(gitRepo *git.Repository, targetDir string, logger hcl
 			return nil
 		}
 
-		// Create target file path
-		targetPath := filepath.Join(targetDir, filePath)
+		// Normalize file path for comparison
+		normalizedFilePath := filepath.Clean(filePath)
+
+		// Filter files by tfPath: if tfPath is set, only extract files from that directory
+		var targetPath string
+		if normalizedTfPath != "" {
+			// Check if file is in the tfPath directory
+			// filePath should start with tfPath/ or be exactly tfPath
+			if normalizedFilePath != normalizedTfPath && !strings.HasPrefix(normalizedFilePath, normalizedTfPath+string(filepath.Separator)) {
+				return nil // Skip files outside tfPath
+			}
+
+			// Calculate relative path from tfPath for target directory structure
+			relPath, err := filepath.Rel(normalizedTfPath, normalizedFilePath)
+			if err != nil {
+				return fmt.Errorf("calculating relative path for %q: %w", filePath, err)
+			}
+			// Create target file path: extract to targetDir/tfPath/relPath
+			// This ensures files are in the correct location for terraform to work in targetDir/tfPath
+			targetPath = filepath.Join(targetDir, normalizedTfPath, relPath)
+		} else {
+			// If tfPath is empty, extract files from root
+			targetPath = filepath.Join(targetDir, filePath)
+		}
 
 		// Create directory structure
 		if err := os.MkdirAll(filepath.Dir(targetPath), 0700); err != nil {

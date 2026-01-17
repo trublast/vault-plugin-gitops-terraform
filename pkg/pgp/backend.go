@@ -8,8 +8,6 @@ import (
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
 	"golang.org/x/crypto/openpgp"
-
-	"github.com/werf/trdl/server/pkg/util"
 )
 
 const (
@@ -20,9 +18,20 @@ const (
 func Paths() []*framework.Path {
 	return []*framework.Path{
 		{
-			Pattern:         "configure/trusted_pgp_public_key/?",
-			HelpSynopsis:    "Configure trusted PGP public keys",
-			HelpDescription: "Configure trusted PGP public keys to check git repository commit signatures",
+			Pattern:         "configure/trusted_pgp_public_key/?$",
+			HelpSynopsis:    "List trusted PGP public keys",
+			HelpDescription: "List all named trusted PGP public keys to check git repository commit signatures",
+			Operations: map[logical.Operation]framework.OperationHandler{
+				logical.ListOperation: &framework.PathOperation{
+					Description: "Get the list of trusted PGP public keys",
+					Callback:    pathConfigureTrustedPGPPublicKeyList,
+				},
+			},
+		},
+		{
+			Pattern:         "configure/trusted_pgp_public_key/" + framework.GenericNameRegex(fieldNameTrustedPGPPublicKeyName) + "$",
+			HelpSynopsis:    "CRUD operations for trusted PGP public key",
+			HelpDescription: "Create, Read, Update, and Delete trusted PGP public key",
 			Fields: map[string]*framework.FieldSchema{
 				fieldNameTrustedPGPPublicKeyName: {
 					Type:        framework.TypeNameString,
@@ -31,8 +40,8 @@ func Paths() []*framework.Path {
 				},
 				fieldNameTrustedPGPPublicKeyData: {
 					Type:        framework.TypeString,
-					Description: "Key data",
-					Required:    true,
+					Description: "Key data (required for CREATE/UPDATE)",
+					Required:    false,
 				},
 			},
 			Operations: map[logical.Operation]framework.OperationHandler{
@@ -44,27 +53,8 @@ func Paths() []*framework.Path {
 					Description: "Update a trusted PGP public key",
 					Callback:    pathConfigureTrustedPGPPublicKeyCreateOrUpdate,
 				},
-				logical.ListOperation: &framework.PathOperation{
-					Description: "Get the list of trusted PGP public keys",
-					Callback:    pathConfigureTrustedPGPPublicKeyList,
-				},
-			},
-			ExistenceCheck: pathKeyExistenceCheck,
-		},
-		{
-			Pattern:         "configure/trusted_pgp_public_key/" + framework.GenericNameRegex(fieldNameTrustedPGPPublicKeyName) + "$",
-			HelpSynopsis:    "Read or delete the configured trusted PGP public key",
-			HelpDescription: "Read or delete the configured trusted PGP public key",
-			Fields: map[string]*framework.FieldSchema{
-				fieldNameTrustedPGPPublicKeyName: {
-					Type:        framework.TypeNameString,
-					Description: "Key name",
-					Required:    true,
-				},
-			},
-			Operations: map[logical.Operation]framework.OperationHandler{
 				logical.ReadOperation: &framework.PathOperation{
-					Description: "Get the trusted PGP public key",
+					Description: "Read the trusted PGP public key",
 					Callback:    pathConfigureTrustedPGPPublicKeyRead,
 				},
 				logical.DeleteOperation: &framework.PathOperation{
@@ -72,6 +62,7 @@ func Paths() []*framework.Path {
 					Callback:    pathConfigureTrustedPGPPublicKeyDelete,
 				},
 			},
+			ExistenceCheck: pathKeyExistenceCheck,
 		},
 	}
 }
@@ -88,15 +79,24 @@ func pathKeyExistenceCheck(ctx context.Context, req *logical.Request, fields *fr
 }
 
 func pathConfigureTrustedPGPPublicKeyCreateOrUpdate(ctx context.Context, req *logical.Request, fields *framework.FieldData) (*logical.Response, error) {
-	if errResp := util.CheckRequiredFields(req, fields); errResp != nil {
-		return errResp, nil
+	// Name is extracted from URL path via GenericNameRegex
+	name := fields.Get(fieldNameTrustedPGPPublicKeyName).(string)
+	if name == "" {
+		return logical.ErrorResponse("key name is required"), nil
 	}
 
-	name := fields.Get(fieldNameTrustedPGPPublicKeyName).(string)
-	key := fields.Get(fieldNameTrustedPGPPublicKeyData).(string)
+	// Public key data is required for CREATE/UPDATE operations
+	keyData, ok := fields.GetOk(fieldNameTrustedPGPPublicKeyData)
+	if !ok {
+		return logical.ErrorResponse("public_key field is required for CREATE/UPDATE operations"), nil
+	}
+	key := keyData.(string)
+	if key == "" {
+		return logical.ErrorResponse("public_key field cannot be empty"), nil
+	}
 
 	if err := IsValidGPGPublicKey(key); err != nil {
-		return nil, err
+		return logical.ErrorResponse("invalid PGP public key: %v", err), nil
 	}
 
 	if err := req.Storage.Put(ctx, &logical.StorageEntry{

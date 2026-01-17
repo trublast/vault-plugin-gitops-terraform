@@ -67,7 +67,7 @@ func ApplyTerraformFromRepo(ctx context.Context, gitRepo *git.Repository, config
 
 	fileInfo, err := os.Stat(tfDir)
 	if err != nil || !fileInfo.IsDir() {
-		return fmt.Errorf("%q is not a directory", tfDir)
+		return fmt.Errorf("%q is not a directory", config.TfPath)
 	}
 
 	// Load terraform state from storage if it exists

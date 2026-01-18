@@ -27,6 +27,11 @@ path "auth/token/create" {
   capabilities = ["update"]
 }
 
+# allow token rotation
+path "auth/token/create-orphan" {
+  capabilities = ["create"]
+}
+
 # allow to manage own policy
 path "sys/policies/acl/self-manage-gitops" {
   capabilities = ["read", "update"]

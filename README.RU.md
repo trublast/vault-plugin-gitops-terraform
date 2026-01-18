@@ -70,11 +70,12 @@ vault write gitops/configure/trusted_pgp_public_key/key2 public_key=@key2.pgp
 
 Настройка доступа плагина к API Vault
 
-*временное решение, токен нужно ротейтить*
+Вы создаете временный токен, используя который плагин создает свой токен с такими же параметрами, а старый токен отзывает.
+Если ротация токена не нужна, укажите `rotate=false`
 
 ```bash
 TOKEN=$(vault token create -orphan -period=7d -policy=root -display-name="gitops-plugin" -field=token)
-vault write gitops/configure/vault vault_addr=http://127.0.0.1:8200 vault_token=$TOKEN
+vault write gitops/configure/vault vault_addr=http://127.0.0.1:8200 vault_token=$TOKEN rotate=true
 ```
 
 ## Подпись

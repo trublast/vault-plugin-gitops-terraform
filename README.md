@@ -70,11 +70,12 @@ vault write gitops/configure/trusted_pgp_public_key/key2 public_key=@key2.pgp
 
 Configuring plugin access to the Vault API
 
-*temporary solution, token needs to be rotated*
+You create a temporary token, which the plugin uses to create its own token with the same parameters and invalidate the old token.
+If token rotation is not required, specify `rotate=false`.
 
 ```bash
 TOKEN=$(vault token create -orphan -period=7d -policy=root -display-name="gitops-plugin" -field=token)
-vault write gitops/configure/vault vault_addr=http://127.0.0.1:8200 vault_token=$TOKEN
+vault write gitops/configure/vault vault_addr=http://127.0.0.1:8200 vault_token=$TOKEN rotate=true
 ```
 
 ## Signing

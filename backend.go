@@ -53,6 +53,12 @@ func newBackend(c *logical.BackendConfig) (*backend, error) {
 		PeriodicFunc: func(ctx context.Context, req *logical.Request) error {
 			return b.PeriodicTask(req.Storage)
 		},
+		PathsSpecial: &logical.Paths{
+			SealWrapStorage: []string{
+				vault_client.StorageKeyConfiguration,
+				git.StorageKeyConfigurationGitCredential,
+			},
+		},
 	}
 
 	baseBackend.Paths = framework.PathAppend(

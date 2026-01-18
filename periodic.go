@@ -11,6 +11,7 @@ package gitops_terraform
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/hashicorp/vault/sdk/logical"
@@ -34,10 +35,12 @@ func (b *backend) PeriodicTask(storage logical.Storage) error {
 	ctx := context.Background()
 
 	// Check and update vault token expire time if needed (using vault_client functions)
-	if err := b.checkAndUpdateVaultTokenExpireTime(ctx, storage); err != nil {
-		b.Logger().Warn(fmt.Sprintf("Failed to check/update vault token expire time: %v", err))
-		// Don't fail the whole task, just log the error
-	}
+	// Run asynchronously to avoid blocking PeriodicTask
+	go func() {
+		if err := b.checkAndUpdateVaultTokenExpireTime(context.Background(), storage); err != nil {
+			b.Logger().Warn(fmt.Sprintf("Failed to check/update vault token expire time: %v", err))
+		}
+	}()
 
 	// Get last finished commit
 	lastFinishedCommit, err := util.GetString(ctx, storage, storageKeyLastFinishedCommit)
@@ -45,11 +48,29 @@ func (b *backend) PeriodicTask(storage logical.Storage) error {
 		return fmt.Errorf("unable to get last finished commit: %w", err)
 	}
 
+	// Check if processGit is already running using CAS guard
+	if !atomic.CompareAndSwapUint32(b.processGitCASGuard, 0, 1) {
+		b.Logger().Debug("GitOps task already in progress, skipping this iteration")
+		return nil
+	}
+
+	// Launch processGit in a goroutine to avoid blocking PeriodicTask
+	go b.processGitInternal(storage, lastFinishedCommit)
+
+	return nil
+}
+
+// processGitInternal is the internal function that runs in a goroutine
+// It ensures the CAS guard is reset when the function completes (successfully or with error)
+func (b *backend) processGitInternal(storage logical.Storage, lastFinishedCommit string) {
+	defer atomic.StoreUint32(b.processGitCASGuard, 0)
+
+	// Don't cancel when the original client request goes away
+	ctx := context.Background()
+
 	if err := b.processGit(ctx, storage, lastFinishedCommit); err != nil {
 		b.Logger().Warn(fmt.Sprintf("Cant process gitops task: %v", err))
 	}
-
-	return nil
 }
 
 func (b *backend) processGit(ctx context.Context, storage logical.Storage, lastFinishedCommit string) error {
@@ -90,7 +111,8 @@ func (b *backend) processGit(ctx context.Context, storage logical.Storage, lastF
 
 	b.Logger().Info("Found signed commit to process", "commitHash", *commitHash)
 
-	// Process commit directly (no task manager)
+	storeProcessStatusCommit(ctx, storage, fmt.Sprintf("Processing commit %q", *commitHash))
+
 	err = b.processCommit(ctx, storage, *commitHash)
 	if err != nil {
 		storeProcessStatusCommit(ctx, storage, fmt.Sprintf("FAILED processing commit %q: %s", *commitHash, err.Error()))

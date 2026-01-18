@@ -22,6 +22,9 @@ type backend struct {
 	// Vault token expire time stored in memory (not in storage)
 	vaultTokenTTL         *vault_client.TokenTTL
 	vaultTokenExpireMutex sync.RWMutex
+
+	// Guard to prevent concurrent execution of processGit
+	processGitCASGuard *uint32
 }
 
 var _ logical.Factory = Factory
@@ -44,7 +47,9 @@ func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend,
 }
 
 func newBackend(c *logical.BackendConfig) (*backend, error) {
-	b := &backend{}
+	b := &backend{
+		processGitCASGuard: new(uint32),
+	}
 
 	baseBackend := &framework.Backend{
 		BackendType: logical.TypeLogical,
@@ -86,7 +91,7 @@ func newBackend(c *logical.BackendConfig) (*backend, error) {
 }
 
 func (b *backend) pathStatusRead(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-	b.Logger().Debug("Reading git repository configuration...")
+	b.Logger().Debug("Reading git repository configuration")
 
 	status, err := util.GetString(ctx, req.Storage, storageKeyProcessStatus)
 	if err != nil {
@@ -169,7 +174,7 @@ func (b *backend) checkAndUpdateVaultTokenExpireTime(ctx context.Context, storag
 	remainingTime := time.Until(ttl.ExpireTime)
 
 	if remainingTime < oneDay {
-		b.Logger().Info(fmt.Sprintf("Token expire time is less than 24 hours (remaining: %v), renewing...", remainingTime))
+		b.Logger().Info(fmt.Sprintf("Token expire time is less than 24 hours (remaining: %v), renewing", remainingTime))
 
 		// Renew token using vault_client function
 		newTTL, err := vault_client.RenewTokenSelf(ctx, vaultConfig, b.Logger())

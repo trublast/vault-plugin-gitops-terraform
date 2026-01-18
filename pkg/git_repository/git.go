@@ -2,7 +2,6 @@ package git_repository
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -160,9 +159,5 @@ func GetConfig(ctx context.Context, storage logical.Storage, logger hclog.Logger
 	if config == nil {
 		return nil, fmt.Errorf("Configuration not set")
 	}
-
-	cfgData, _ := json.MarshalIndent(config, "", "  ") // nolint:errcheck
-	logger.Debug(fmt.Sprintf("Got Configuration:\n%s", string(cfgData)))
-
 	return config, nil
 }

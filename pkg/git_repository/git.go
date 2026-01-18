@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	goGit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/transport/http"
@@ -15,6 +16,12 @@ import (
 )
 
 type gitCommitHash = string
+
+// CommitInfo represents a commit with its hash and date
+type CommitInfo struct {
+	CommitHash string
+	CommitDate time.Time
+}
 
 type gitService struct {
 	ctx     context.Context
@@ -33,14 +40,18 @@ func GitService(ctx context.Context, storage logical.Storage, logger hclog.Logge
 // FindFirstSignedCommitFromHead searches for the first signed commit starting from HEAD
 // and going backwards until lastFinishedCommit.
 // Returns the first commit that has the required number of verified signatures.
-func (g gitService) FindFirstSignedCommitFromHead(lastFinishedCommit gitCommitHash) (*gitCommitHash, error) {
+// Validates that commit date is not newer than current time and not older than lastFinishedCommit date.
+func (g gitService) FindFirstSignedCommitFromHead(lastFinishedCommit *CommitInfo) (*CommitInfo, error) {
 	config, err := GetConfig(g.ctx, g.storage, g.logger)
 	if err != nil {
 		return nil, err
 	}
 
-	// Determine the boundary commit: use lastFinishedCommit
-	boundaryCommit := lastFinishedCommit
+	// Determine the boundary commit: use lastFinishedCommit hash
+	boundaryCommit := ""
+	if lastFinishedCommit != nil {
+		boundaryCommit = lastFinishedCommit.CommitHash
+	}
 
 	// Clone git repository and get head commit
 	g.logger.Debug(fmt.Sprintf("Cloning git repo %q branch %q", config.GitRepoUrl, config.GitBranch))
@@ -60,6 +71,9 @@ func (g gitService) FindFirstSignedCommitFromHead(lastFinishedCommit gitCommitHa
 	if err != nil {
 		return nil, fmt.Errorf("unable to get trusted public keys: %w", err)
 	}
+
+	// Get current time for date validation
+	currentTime := time.Now()
 
 	// Iterate from HEAD backwards until we find a signed commit or reach the boundary
 	ref, err := gitRepo.Head()
@@ -89,6 +103,7 @@ func (g gitService) FindFirstSignedCommitFromHead(lastFinishedCommit gitCommitHa
 		}
 
 		commitHash := c.Hash.String()
+		commitDate := c.Committer.When
 
 		// Stop if we reached the boundary commit
 		if boundaryCommit != "" && commitHash == boundaryCommit {
@@ -103,9 +118,24 @@ func (g gitService) FindFirstSignedCommitFromHead(lastFinishedCommit gitCommitHa
 			continue
 		}
 
-		// Found a commit with required signatures
-		g.logger.Info(fmt.Sprintf("Found signed commit: %q", commitHash))
-		return &commitHash, nil
+		// Check that commit date is not newer than current date
+		if commitDate.After(currentTime) {
+			g.logger.Debug(fmt.Sprintf("Commit %q has date %v which is in the future, skipping", commitHash, commitDate))
+			continue
+		}
+
+		// Check that commit date is not older than lastFinishedCommit date
+		if lastFinishedCommit != nil && commitDate.Before(lastFinishedCommit.CommitDate) {
+			g.logger.Debug(fmt.Sprintf("Commit %q has date %v which is older than last finished commit date %v, skipping", commitHash, commitDate, lastFinishedCommit.CommitDate))
+			continue
+		}
+
+		// Found a commit with required signatures and valid date
+		g.logger.Info(fmt.Sprintf("Found signed commit: %q with date %v", commitHash, commitDate))
+		return &CommitInfo{
+			CommitHash: commitHash,
+			CommitDate: commitDate,
+		}, nil
 	}
 
 	// No signed commit found

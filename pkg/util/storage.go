@@ -77,3 +77,33 @@ func GetStringMap(ctx context.Context, storage logical.Storage, key string) (map
 	err = json.Unmarshal(entry.Value, &value)
 	return value, err
 }
+
+// PutJSON saves any JSON-serializable value into storage by key
+func PutJSON(ctx context.Context, storage logical.Storage, key string, value interface{}) error {
+	if value == nil {
+		return fmt.Errorf("prohibited store nil")
+	}
+	d, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("unable to marshal value: %w", err)
+	}
+	return storage.Put(ctx, &logical.StorageEntry{
+		Key:   key,
+		Value: d,
+	})
+}
+
+// GetJSON retrieves and unmarshals a JSON value from storage by key
+func GetJSON(ctx context.Context, storage logical.Storage, key string, value interface{}) error {
+	entry, err := storage.Get(ctx, key)
+	if err != nil {
+		return fmt.Errorf("unable to get key %q from storage: %w", key, err)
+	}
+	if entry == nil {
+		return nil
+	}
+	if err := json.Unmarshal(entry.Value, value); err != nil {
+		return fmt.Errorf("unable to unmarshal value: %w", err)
+	}
+	return nil
+}

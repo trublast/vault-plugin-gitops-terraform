@@ -25,8 +25,14 @@ var (
 	systemClock util.Clock = util.NewSystemClock()
 )
 
+// LastFinishedCommit represents the last successfully processed commit with its date
+type LastFinishedCommit struct {
+	CommitHash string    `json:"commit_hash"`
+	CommitDate time.Time `json:"commit_date"`
+}
+
 const (
-	storageKeyLastFinishedCommit = "last_finished_commit"
+	storageKeyLastFinishedCommit = "last_processed_commit"
 	lastPeriodicRunTimestampKey  = "last_periodic_run_timestamp"
 	storageKeyProcessStatus      = "process_status"
 )
@@ -43,7 +49,8 @@ func (b *backend) PeriodicTask(storage logical.Storage) error {
 	}()
 
 	// Get last finished commit
-	lastFinishedCommit, err := util.GetString(ctx, storage, storageKeyLastFinishedCommit)
+	var lastFinishedCommit *LastFinishedCommit
+	err := util.GetJSON(ctx, storage, storageKeyLastFinishedCommit, &lastFinishedCommit)
 	if err != nil {
 		return fmt.Errorf("unable to get last finished commit: %w", err)
 	}
@@ -62,7 +69,7 @@ func (b *backend) PeriodicTask(storage logical.Storage) error {
 
 // processGitInternal is the internal function that runs in a goroutine
 // It ensures the CAS guard is reset when the function completes (successfully or with error)
-func (b *backend) processGitInternal(storage logical.Storage, lastFinishedCommit string) {
+func (b *backend) processGitInternal(storage logical.Storage, lastFinishedCommit *LastFinishedCommit) {
 	defer atomic.StoreUint32(b.processGitCASGuard, 0)
 
 	// Don't cancel when the original client request goes away
@@ -73,7 +80,7 @@ func (b *backend) processGitInternal(storage logical.Storage, lastFinishedCommit
 	}
 }
 
-func (b *backend) processGit(ctx context.Context, storage logical.Storage, lastFinishedCommit string) error {
+func (b *backend) processGit(ctx context.Context, storage logical.Storage, lastFinishedCommit *LastFinishedCommit) error {
 	config, err := git_repository.GetConfig(ctx, storage, b.Logger())
 	if err != nil {
 		return err
@@ -94,13 +101,22 @@ func (b *backend) processGit(ctx context.Context, storage logical.Storage, lastF
 		return err
 	}
 
+	// Convert LastFinishedCommit to LastFinishedCommitInfo for git_repository
+	var lastFinishedCommitInfo *git_repository.CommitInfo
+	if lastFinishedCommit != nil {
+		lastFinishedCommitInfo = &git_repository.CommitInfo{
+			CommitHash: lastFinishedCommit.CommitHash,
+			CommitDate: lastFinishedCommit.CommitDate,
+		}
+	}
+
 	// Find first signed commit from HEAD backwards to lastFinishedCommit
-	commitHash, err := git_repository.GitService(ctx, storage, b.Logger()).FindFirstSignedCommitFromHead(lastFinishedCommit)
+	commitInfo, err := git_repository.GitService(ctx, storage, b.Logger()).FindFirstSignedCommitFromHead(lastFinishedCommitInfo)
 	if err != nil {
 		return fmt.Errorf("finding signed commit: %w", err)
 	}
 
-	if commitHash == nil {
+	if commitInfo == nil {
 		b.Logger().Debug("No signed commit found: finish periodic task")
 		// TODO: do not store status when already same status
 		if err := storeProcessStatusCommit(ctx, storage, "No new signed commit found"); err != nil {
@@ -109,26 +125,32 @@ func (b *backend) processGit(ctx context.Context, storage logical.Storage, lastF
 		return nil
 	}
 
-	b.Logger().Info("Found signed commit to process", "commitHash", *commitHash)
+	b.Logger().Info("Found signed commit to process", "commitHash", commitInfo.CommitHash, "commitDate", commitInfo.CommitDate)
 
-	storeProcessStatusCommit(ctx, storage, fmt.Sprintf("Processing commit %q", *commitHash))
+	storeProcessStatusCommit(ctx, storage, fmt.Sprintf("Processing commit %q", commitInfo.CommitHash))
 
-	err = b.processCommit(ctx, storage, *commitHash)
+	err = b.processCommit(ctx, storage, commitInfo.CommitHash)
 	if err != nil {
-		storeProcessStatusCommit(ctx, storage, fmt.Sprintf("FAILED processing commit %q: %s", *commitHash, err.Error()))
-		return fmt.Errorf("processing commit %q: %w", *commitHash, err)
+		storeProcessStatusCommit(ctx, storage, fmt.Sprintf("FAILED processing commit %q: %s", commitInfo.CommitHash, err.Error()))
+		return fmt.Errorf("processing commit %q: %w", commitInfo.CommitHash, err)
 	}
 
-	if err := storeProcessStatusCommit(ctx, storage, fmt.Sprintf("Successfully processed commit %q", *commitHash)); err != nil {
+	if err := storeProcessStatusCommit(ctx, storage, fmt.Sprintf("Successfully processed commit %q", commitInfo.CommitHash)); err != nil {
 		return fmt.Errorf("unable to store process status commit: %w", err)
 	}
 
+	// Convert CommitInfo to LastFinishedCommit and save
+	lastFinishedCommitToStore := &LastFinishedCommit{
+		CommitHash: commitInfo.CommitHash,
+		CommitDate: commitInfo.CommitDate,
+	}
+
 	// Save last finished commit only if processCommit succeeded
-	if err := storeLastFinishedCommit(ctx, storage, *commitHash); err != nil {
+	if err := storeLastFinishedCommit(ctx, storage, lastFinishedCommitToStore); err != nil {
 		return fmt.Errorf("unable to save last finished commit: %w", err)
 	}
 
-	b.Logger().Info("Successfully processed commit", "commitHash", *commitHash)
+	b.Logger().Info("Successfully processed commit", "commitHash", commitInfo.CommitHash, "commitDate", commitInfo.CommitDate)
 
 	return nil
 }
@@ -150,8 +172,8 @@ func updateLastRunTimeStamp(ctx context.Context, storage logical.Storage, timeSt
 	return util.PutInt64(ctx, storage, lastPeriodicRunTimestampKey, timeStamp.Unix())
 }
 
-func storeLastFinishedCommit(ctx context.Context, storage logical.Storage, hashCommit string) error {
-	return util.PutString(ctx, storage, storageKeyLastFinishedCommit, hashCommit)
+func storeLastFinishedCommit(ctx context.Context, storage logical.Storage, commitInfo *LastFinishedCommit) error {
+	return util.PutJSON(ctx, storage, storageKeyLastFinishedCommit, commitInfo)
 }
 
 func storeProcessStatusCommit(ctx context.Context, storage logical.Storage, status string) error {

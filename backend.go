@@ -97,7 +97,8 @@ func (b *backend) pathStatusRead(ctx context.Context, req *logical.Request, data
 	if err != nil {
 		return logical.ErrorResponse("Unable to get status: %s", err), nil
 	}
-	lastFinishedCommit, err := util.GetString(ctx, req.Storage, storageKeyLastFinishedCommit)
+	var lastFinishedCommit *LastFinishedCommit
+	err = util.GetJSON(ctx, req.Storage, storageKeyLastFinishedCommit, &lastFinishedCommit)
 	if err != nil {
 		return logical.ErrorResponse("Unable to get commit: %s", err), nil
 	}
@@ -110,11 +111,19 @@ func (b *backend) pathStatusRead(ctx context.Context, req *logical.Request, data
 		last_run = time.Unix(lastRunTimestamp, 0).Format(time.RFC3339)
 	}
 
-	return &logical.Response{Data: map[string]interface{}{
-		"status":               status,
-		"last_finished_commit": lastFinishedCommit,
-		"last_run":             last_run,
-	}}, nil
+	responseData := map[string]interface{}{
+		"status":   status,
+		"last_run": last_run,
+	}
+	if lastFinishedCommit != nil {
+		responseData["last_finished_commit"] = lastFinishedCommit.CommitHash
+		responseData["last_finished_commit_date"] = lastFinishedCommit.CommitDate.Format(time.RFC3339)
+	} else {
+		responseData["last_finished_commit"] = ""
+		responseData["last_finished_commit_date"] = ""
+	}
+
+	return &logical.Response{Data: responseData}, nil
 }
 
 func (b *backend) SetupBackend(ctx context.Context, config *logical.BackendConfig) error {

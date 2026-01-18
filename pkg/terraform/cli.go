@@ -184,7 +184,7 @@ func runTerraformInit(ctx context.Context, workDir string, config CLIConfig) err
 	tfBinary := getTfBinary(config)
 	cmd := exec.CommandContext(ctx, tfBinary, "init", "-no-color", "-input=false")
 	cmd.Dir = workDir
-	cmd.Stdout = os.Stdout
+	cmd.Stdout = io.Discard
 
 	// Copy existing environment variables
 	cmd.Env = os.Environ()
@@ -216,7 +216,7 @@ func runTerraformPlan(ctx context.Context, workDir string, config CLIConfig) err
 	tfBinary := getTfBinary(config)
 	cmd := exec.CommandContext(ctx, tfBinary, "plan", "-no-color", "-input=false", "-out=tfplan")
 	cmd.Dir = workDir
-	cmd.Stdout = os.Stdout
+	cmd.Stdout = io.Discard
 
 	// Copy existing environment variables
 	cmd.Env = os.Environ()
@@ -258,7 +258,7 @@ func runTerraformApply(ctx context.Context, workDir string, config CLIConfig) er
 	tfBinary := getTfBinary(config)
 	cmd := exec.CommandContext(ctx, tfBinary, "apply", "-no-color", "-input=false", "-auto-approve", "tfplan")
 	cmd.Dir = workDir
-	cmd.Stdout = os.Stdout
+	cmd.Stdout = io.Discard
 
 	// Copy existing environment variables
 	cmd.Env = os.Environ()

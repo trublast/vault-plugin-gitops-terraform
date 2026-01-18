@@ -3,8 +3,6 @@ package terraform
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -139,57 +137,6 @@ func (b *backend) pathConfigureCreateOrUpdate(ctx context.Context, req *logical.
 	}
 
 	return nil, nil
-}
-
-// validateTfBinary validates that the terraform binary exists and is executable
-func validateTfBinary(tfBinary string) error {
-	if tfBinary == "" {
-		return fmt.Errorf("terraform binary path cannot be empty")
-	}
-
-	// Check if it's an absolute path
-	if filepath.IsAbs(tfBinary) {
-		// Check if file exists
-		fileInfo, err := os.Stat(tfBinary)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return fmt.Errorf("terraform binary not found at path %q", tfBinary)
-			}
-			return fmt.Errorf("unable to access terraform binary at %q: %w", tfBinary, err)
-		}
-
-		// Check if it's a regular file (not a directory)
-		if fileInfo.IsDir() {
-			return fmt.Errorf("terraform binary path %q is a directory, not a file", tfBinary)
-		}
-
-		// Check if file is executable
-		mode := fileInfo.Mode()
-		if mode&0111 == 0 {
-			return fmt.Errorf("terraform binary at %q does not have execute permissions", tfBinary)
-		}
-
-		return nil
-	}
-
-	// If it's not an absolute path, check if it exists in PATH
-	path, err := exec.LookPath(tfBinary)
-	if err != nil {
-		return fmt.Errorf("terraform binary %q not found in PATH", tfBinary)
-	}
-
-	// Verify the found binary is executable
-	fileInfo, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("unable to access terraform binary at %q: %w", path, err)
-	}
-
-	mode := fileInfo.Mode()
-	if mode&0111 == 0 {
-		return fmt.Errorf("terraform binary at %q (found in PATH) does not have execute permissions", path)
-	}
-
-	return nil
 }
 
 func (b *backend) pathConfigureRead(ctx context.Context, req *logical.Request, _ *framework.FieldData) (*logical.Response, error) {

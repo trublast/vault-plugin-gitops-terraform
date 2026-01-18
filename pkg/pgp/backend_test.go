@@ -36,14 +36,18 @@ func (suite *pathConfigureTrustedPGPPublicKeyCallbacksSuite) SetupTest() {
 }
 
 func (suite *pathConfigureTrustedPGPPublicKeyCallbacksSuite) TestKeyCreateOrUpdate_SeveralKeys() {
-	suite.req.Path = "configure/trusted_pgp_public_key"
 	suite.req.Operation = logical.CreateOperation
 
 	for _, reqDataKey := range []map[string]interface{}{
 		dataTrustedPGPPublicKey1(),
 		dataTrustedPGPPublicKey2(),
 	} {
-		suite.req.Data = reqDataKey
+		keyName := reqDataKey[fieldNameTrustedPGPPublicKeyName].(string)
+		suite.req.Path = fmt.Sprintf("configure/trusted_pgp_public_key/%s", keyName)
+		// Only public_key in body, name comes from URL path
+		suite.req.Data = map[string]interface{}{
+			fieldNameTrustedPGPPublicKeyData: reqDataKey[fieldNameTrustedPGPPublicKeyData],
+		}
 		resp, err := suite.backend.HandleRequest(suite.ctx, suite.req)
 		assert.Nil(suite.T(), err)
 		assert.Nil(suite.T(), resp)
@@ -61,21 +65,18 @@ func (suite *pathConfigureTrustedPGPPublicKeyCallbacksSuite) TestKeyCreateOrUpda
 }
 
 func (suite *pathConfigureTrustedPGPPublicKeyCallbacksSuite) TestKeyCreateOrUpdate_RequiredFields() {
-	suite.req.Path = "configure/trusted_pgp_public_key"
+	testData := dataTrustedPGPPublicKey1()
+	testKeyName := testData[fieldNameTrustedPGPPublicKeyName].(string)
+	suite.req.Path = fmt.Sprintf("configure/trusted_pgp_public_key/%s", testKeyName)
 	suite.req.Operation = logical.CreateOperation
 
-	for _, fieldName := range []string{fieldNameTrustedPGPPublicKeyName, fieldNameTrustedPGPPublicKeyData} {
-		suite.Run(fieldName, func() {
-			data := dataTrustedPGPPublicKey1()
-			delete(data, fieldName)
-
-			suite.req.Data = data
-
-			resp, err := suite.backend.HandleRequest(suite.ctx, suite.req)
-			assert.Nil(suite.T(), err)
-			assert.Equal(suite.T(), logical.ErrorResponse("Required field %q must be set", fieldName), resp)
-		})
-	}
+	// Test missing public_key field
+	suite.req.Data = map[string]interface{}{}
+	resp, err := suite.backend.HandleRequest(suite.ctx, suite.req)
+	assert.Nil(suite.T(), err)
+	assert.NotNil(suite.T(), resp)
+	assert.True(suite.T(), resp.IsError())
+	assert.Contains(suite.T(), resp.Error().Error(), "public_key field is required")
 }
 
 func (suite *pathConfigureTrustedPGPPublicKeyCallbacksSuite) TestReadOrList_NoKeys() {

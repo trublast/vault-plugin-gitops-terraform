@@ -85,7 +85,7 @@ func (b *backend) processGit(ctx context.Context, storage logical.Storage, lastF
 	}
 
 	if !gitCheckintervalExceeded {
-		b.Logger().Info("git poll interval not exceeded, finish periodic task")
+		b.Logger().Debug("git poll interval not exceeded, finish periodic task")
 		return nil
 	}
 

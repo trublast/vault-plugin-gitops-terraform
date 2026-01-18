@@ -198,7 +198,7 @@ func runTerraformInit(ctx context.Context, workDir string, config CLIConfig) err
 	var stderrBuf strings.Builder
 	cmd.Stderr = &stderrBuf
 
-	config.Logger.Info("Running terraform init...")
+	config.Logger.Info("Running terraform init")
 	if err := cmd.Run(); err != nil {
 		stderr := strings.TrimSpace(stderrBuf.String())
 		if stderr != "" {
@@ -239,7 +239,7 @@ func runTerraformPlan(ctx context.Context, workDir string, config CLIConfig) err
 	var stderrBuf strings.Builder
 	cmd.Stderr = &stderrBuf
 
-	config.Logger.Info("Running terraform plan...")
+	config.Logger.Info("Running terraform plan")
 	if err := cmd.Run(); err != nil {
 		stderr := strings.TrimSpace(stderrBuf.String())
 		if stderr != "" {
@@ -280,7 +280,7 @@ func runTerraformApply(ctx context.Context, workDir string, config CLIConfig) er
 	var stderrBuf strings.Builder
 	cmd.Stderr = &stderrBuf
 
-	config.Logger.Info("Running terraform apply...")
+	config.Logger.Info("Running terraform apply")
 	if err := cmd.Run(); err != nil {
 		stderr := strings.TrimSpace(stderrBuf.String())
 		if stderr != "" {
@@ -316,7 +316,7 @@ func loadTerraformState(ctx context.Context, workDir string, config CLIConfig) e
 		return fmt.Errorf("writing terraform state file: %w", err)
 	}
 
-	config.Logger.Info("Loaded terraform state from storage")
+	config.Logger.Debug("Loaded terraform state from storage")
 	return nil
 }
 

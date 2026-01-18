@@ -92,7 +92,7 @@ func (b *backend) pathConfigExistenceCheck(ctx context.Context, req *logical.Req
 }
 
 func (b *backend) pathConfigureCreateOrUpdate(ctx context.Context, req *logical.Request, fields *framework.FieldData) (*logical.Response, error) {
-	b.Logger().Debug("Terraform configuration started...")
+	b.Logger().Trace("Terraform configuration started")
 
 	var config Configuration
 
@@ -140,7 +140,7 @@ func (b *backend) pathConfigureCreateOrUpdate(ctx context.Context, req *logical.
 }
 
 func (b *backend) pathConfigureRead(ctx context.Context, req *logical.Request, _ *framework.FieldData) (*logical.Response, error) {
-	b.Logger().Debug("Reading terraform configuration...")
+	b.Logger().Trace("Reading terraform configuration")
 
 	config, err := getConfiguration(ctx, req.Storage)
 	if err != nil {
@@ -154,7 +154,7 @@ func (b *backend) pathConfigureRead(ctx context.Context, req *logical.Request, _
 }
 
 func (b *backend) pathConfigureDelete(ctx context.Context, req *logical.Request, _ *framework.FieldData) (*logical.Response, error) {
-	b.Logger().Debug("Deleting Configuration...")
+	b.Logger().Trace("Deleting Configuration")
 
 	if err := deleteConfiguration(ctx, req.Storage); err != nil {
 		return logical.ErrorResponse("Unable to delete Configuration: %s", err), nil

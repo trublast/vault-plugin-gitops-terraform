@@ -104,7 +104,7 @@ func (b *backend) pathConfigExistenceCheck(ctx context.Context, req *logical.Req
 }
 
 func (b *backend) pathConfigureCreateOrUpdate(ctx context.Context, req *logical.Request, fields *framework.FieldData) (*logical.Response, error) {
-	b.Logger().Debug("Vault client configuration started...")
+	b.Logger().Trace("Vault client configuration started")
 
 	// Get existing configuration for UPDATE operation
 	var existingConfig *Configuration
@@ -172,7 +172,7 @@ func (b *backend) pathConfigureCreateOrUpdate(ctx context.Context, req *logical.
 			rotateNamespace = os.Getenv("VAULT_NAMESPACE")
 		}
 
-		b.Logger().Debug("Token rotation requested, creating orphan token...")
+		b.Logger().Debug("Token rotation requested, creating orphan token")
 
 		// Create orphan token using the provided token
 		newToken, err := createOrphanToken(ctx, rotateAddr, rotateNamespace, oldToken, b.Logger())
@@ -192,7 +192,7 @@ func (b *backend) pathConfigureCreateOrUpdate(ctx context.Context, req *logical.
 
 	// Revoke the old token only after successful save
 	if rotate && oldToken != "" {
-		b.Logger().Debug("New token saved successfully, revoking old token...")
+		b.Logger().Debug("New token saved successfully, revoking old token")
 		if err := revokeTokenSelf(ctx, rotateAddr, rotateNamespace, oldToken, b.Logger()); err != nil {
 			// Log warning but don't fail - the new token is already saved
 			b.Logger().Warn(fmt.Sprintf("Failed to revoke old token: %s", err))
@@ -205,7 +205,7 @@ func (b *backend) pathConfigureCreateOrUpdate(ctx context.Context, req *logical.
 }
 
 func (b *backend) pathConfigureRead(ctx context.Context, req *logical.Request, _ *framework.FieldData) (*logical.Response, error) {
-	b.Logger().Debug("Reading vault client configuration...")
+	b.Logger().Trace("Reading vault client configuration")
 
 	config, err := GetValidConfig(ctx, req.Storage)
 	if err != nil {
@@ -224,7 +224,7 @@ func (b *backend) pathConfigureRead(ctx context.Context, req *logical.Request, _
 }
 
 func (b *backend) pathConfigureDelete(ctx context.Context, req *logical.Request, _ *framework.FieldData) (*logical.Response, error) {
-	b.Logger().Debug("Deleting Configuration...")
+	b.Logger().Trace("Deleting Configuration")
 
 	if err := deleteConfiguration(ctx, req.Storage); err != nil {
 		return logical.ErrorResponse("Unable to delete Configuration: %s", err), nil

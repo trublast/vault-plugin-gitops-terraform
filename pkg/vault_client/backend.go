@@ -19,6 +19,7 @@ import (
 const (
 	FieldNameVaultAddr        = "vault_addr"
 	FieldNameVaultToken       = "vault_token"
+	FieldNameWrappingToken    = "wrapping_token"
 	FieldNameVaultNamespace   = "vault_namespace"
 	FieldNameVaultTokenRotate = "rotate"
 	StorageKeyConfiguration   = "vault_client_configuration"
@@ -57,13 +58,17 @@ func Paths(baseBackend *framework.Backend) []*framework.Path {
 					Type:        framework.TypeString,
 					Description: "Vault token for API access.",
 				},
+				FieldNameWrappingToken: {
+					Type:        framework.TypeString,
+					Description: "Wrapping vault token for API access.",
+				},
 				FieldNameVaultNamespace: {
 					Type:        framework.TypeString,
 					Description: "Vault namespace for API access.",
 				},
 				FieldNameVaultTokenRotate: {
 					Type:        framework.TypeBool,
-					Description: "Rotate vault token before storing in storage.",
+					Description: "Rotate vault token.",
 					Default:     false,
 				},
 			},
@@ -115,67 +120,49 @@ func (b *backend) pathConfigureCreateOrUpdate(ctx context.Context, req *logical.
 
 	config := Configuration{}
 
-	// For UPDATE: preserve existing token if new one is not provided
-	// For CREATE: use provided token or empty string
-	vaultAddr := fields.Get(FieldNameVaultAddr).(string)
-	vaultAddr = strings.TrimSuffix(vaultAddr, "/")
-	if req.Operation == logical.UpdateOperation && vaultAddr == "" && existingConfig != nil {
-		// Keep existing addr if not provided in update
+	// For UPDATE: preserve existing values if not provided in request
+	// For CREATE: use provided values or empty string
+	if vaultAddrVal, ok := fields.GetOk(FieldNameVaultAddr); ok {
+		config.VaultAddr = strings.TrimSuffix(vaultAddrVal.(string), "/")
+	} else if req.Operation == logical.UpdateOperation && existingConfig != nil {
 		config.VaultAddr = existingConfig.VaultAddr
-	} else {
-		// Use provided addr (or empty for CREATE if not provided)
-		config.VaultAddr = vaultAddr
 	}
 
-	vaultNamespace := fields.Get(FieldNameVaultNamespace).(string)
-	if req.Operation == logical.UpdateOperation && vaultNamespace == "" && existingConfig != nil {
-		// Keep existing namespace if not provided in update
+	if vaultNamespaceVal, ok := fields.GetOk(FieldNameVaultNamespace); ok {
+		config.VaultNamespace = vaultNamespaceVal.(string)
+	} else if req.Operation == logical.UpdateOperation && existingConfig != nil {
 		config.VaultNamespace = existingConfig.VaultNamespace
-	} else {
-		// Use provided namespace (or empty for CREATE if not provided)
-		config.VaultNamespace = vaultNamespace
 	}
 
-	vaultToken := fields.Get(FieldNameVaultToken).(string)
-	if req.Operation == logical.UpdateOperation && vaultToken == "" && existingConfig != nil {
-		// Keep existing token if not provided in update
+	vaultTokenVal, vaultTokenOk := fields.GetOk(FieldNameVaultToken)
+	wrappingTokenVal, wrappingTokenOk := fields.GetOk(FieldNameWrappingToken)
+
+	if wrappingTokenOk {
+		wrappingToken := wrappingTokenVal.(string)
+		unwrappingToken, err := unwrapToken(ctx, config.VaultAddr, config.VaultNamespace, wrappingToken, b.Logger())
+		if err != nil {
+			return logical.ErrorResponse("Failed to unwrap token: %s", err), nil
+		}
+		config.VaultToken = unwrappingToken
+	} else if vaultTokenOk {
+		config.VaultToken = vaultTokenVal.(string)
+	} else if req.Operation == logical.UpdateOperation && existingConfig != nil {
 		config.VaultToken = existingConfig.VaultToken
-	} else {
-		// Use provided token (or empty for CREATE if not provided)
-		config.VaultToken = vaultToken
 	}
 
 	// Get rotate parameter
-	rotate := fields.Get(FieldNameVaultTokenRotate).(bool)
+	rotateVal, rotateOk := fields.GetOk(FieldNameVaultTokenRotate)
+	rotate := rotateOk && rotateVal.(bool)
 
 	// Variables for token rotation
 	var oldToken string
-	var rotateAddr, rotateNamespace string
 
 	// If rotate is true and token was provided, create orphan token
 	if rotate && config.VaultToken != "" {
-		// Save old token for later revocation
 		oldToken = config.VaultToken
-
-		// Determine vault address for token rotation
-		rotateAddr = config.VaultAddr
-		if rotateAddr == "" {
-			rotateAddr = os.Getenv("VAULT_ADDR")
-		}
-		if rotateAddr == "" {
-			rotateAddr = "http://127.0.0.1:8200"
-		}
-
-		// Determine namespace for token rotation
-		rotateNamespace = config.VaultNamespace
-		if rotateNamespace == "" {
-			rotateNamespace = os.Getenv("VAULT_NAMESPACE")
-		}
-
 		b.Logger().Debug("Token rotation requested, creating orphan token")
 
-		// Create orphan token using the provided token
-		newToken, err := createOrphanToken(ctx, rotateAddr, rotateNamespace, oldToken, b.Logger())
+		newToken, err := createOrphanToken(ctx, config.VaultAddr, config.VaultNamespace, oldToken, b.Logger())
 		if err != nil {
 			return logical.ErrorResponse("Failed to create orphan token: %s", err), nil
 		}
@@ -193,7 +180,7 @@ func (b *backend) pathConfigureCreateOrUpdate(ctx context.Context, req *logical.
 	// Revoke the old token only after successful save
 	if rotate && oldToken != "" {
 		b.Logger().Debug("New token saved successfully, revoking old token")
-		if err := revokeTokenSelf(ctx, rotateAddr, rotateNamespace, oldToken, b.Logger()); err != nil {
+		if err := revokeTokenSelf(ctx, config.VaultAddr, config.VaultNamespace, oldToken, b.Logger()); err != nil {
 			// Log warning but don't fail - the new token is already saved
 			b.Logger().Warn(fmt.Sprintf("Failed to revoke old token: %s", err))
 		} else {
@@ -286,20 +273,11 @@ func GetValidConfig(ctx context.Context, storage logical.Storage) (*Configuratio
 		return nil, err
 	}
 
-	if config.VaultAddr == "" {
-		config.VaultAddr = os.Getenv("VAULT_ADDR")
-	}
-
-	if config.VaultAddr == "" {
-		config.VaultAddr = "http://127.0.0.1:8200"
-	}
+	config.VaultAddr = resolveVaultAddr(config.VaultAddr)
+	config.VaultNamespace = resolveVaultNamespace(config.VaultNamespace)
 
 	if config.VaultToken == "" {
 		return nil, fmt.Errorf("vault_token is not set in configuration")
-	}
-
-	if config.VaultNamespace == "" {
-		config.VaultNamespace = os.Getenv("VAULT_NAMESPACE")
 	}
 
 	return config, nil
@@ -383,11 +361,63 @@ func RenewTokenSelf(ctx context.Context, config *Configuration, logger hclog.Log
 	}, nil
 }
 
+// resolveVaultAddr returns vaultAddr if non-empty, else VAULT_ADDR env, else default
+func resolveVaultAddr(addr string) string {
+	if addr != "" {
+		return addr
+	}
+	if a := os.Getenv("VAULT_ADDR"); a != "" {
+		return a
+	}
+	return "http://127.0.0.1:8200"
+}
+
+// resolveVaultNamespace returns vaultNamespace if non-empty, else VAULT_NAMESPACE env
+func resolveVaultNamespace(namespace string) string {
+	if namespace != "" {
+		return namespace
+	}
+	return os.Getenv("VAULT_NAMESPACE")
+}
+
+// unwrapToken unwraps a wrapped token and returns the actual token
+func unwrapToken(ctx context.Context, vaultAddr, vaultNamespace, wrappingToken string, logger hclog.Logger) (string, error) {
+	addr := resolveVaultAddr(vaultAddr)
+	client, err := api.NewClient(&api.Config{
+		Address: addr,
+		HttpClient: &http.Client{
+			Timeout: 5 * time.Second,
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("creating vault client: %w", err)
+	}
+
+	if ns := resolveVaultNamespace(vaultNamespace); ns != "" {
+		client.SetNamespace(ns)
+	}
+
+	secret, err := client.Logical().UnwrapWithContext(ctx, wrappingToken)
+	if err != nil {
+		return "", fmt.Errorf("unwrap: %w", err)
+	}
+	if secret == nil {
+		return "", errors.New("unwrap response is empty")
+	}
+	if secret.Auth == nil || secret.Auth.ClientToken == "" {
+		return "", errors.New("unwrapped secret does not contain a token")
+	}
+
+	logger.Debug("Wrapped token unwrapped successfully")
+	return secret.Auth.ClientToken, nil
+}
+
 // createOrphanToken creates a new orphan token using the provided token and returns the new token
 // The new token will have the same parameters (policies, period, ttl, etc.) as the old token
 func createOrphanToken(ctx context.Context, vaultAddr, vaultNamespace, token string, logger hclog.Logger) (string, error) {
+	addr := resolveVaultAddr(vaultAddr)
 	client, err := api.NewClient(&api.Config{
-		Address: vaultAddr,
+		Address: addr,
 		HttpClient: &http.Client{
 			Timeout: 5 * time.Second,
 		},
@@ -397,8 +427,8 @@ func createOrphanToken(ctx context.Context, vaultAddr, vaultNamespace, token str
 	}
 
 	client.SetToken(token)
-	if vaultNamespace != "" {
-		client.SetNamespace(vaultNamespace)
+	if ns := resolveVaultNamespace(vaultNamespace); ns != "" {
+		client.SetNamespace(ns)
 	}
 
 	// Lookup current token to get its parameters
@@ -523,8 +553,9 @@ func createOrphanToken(ctx context.Context, vaultAddr, vaultNamespace, token str
 
 // revokeTokenSelf revokes the current token using revoke-self endpoint
 func revokeTokenSelf(ctx context.Context, vaultAddr, vaultNamespace, token string, logger hclog.Logger) error {
+	addr := resolveVaultAddr(vaultAddr)
 	client, err := api.NewClient(&api.Config{
-		Address: vaultAddr,
+		Address: addr,
 		HttpClient: &http.Client{
 			Timeout: 5 * time.Second,
 		},
@@ -534,8 +565,8 @@ func revokeTokenSelf(ctx context.Context, vaultAddr, vaultNamespace, token strin
 	}
 
 	client.SetToken(token)
-	if vaultNamespace != "" {
-		client.SetNamespace(vaultNamespace)
+	if ns := resolveVaultNamespace(vaultNamespace); ns != "" {
+		client.SetNamespace(ns)
 	}
 
 	// Revoke the token

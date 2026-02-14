@@ -70,13 +70,14 @@ vault write gitops/configure/trusted_pgp_public_key/key2 public_key=@key2.pgp
 
 Configuring plugin access to the Vault API
 
-You create a temporary token, which the plugin uses to create its own token with the same parameters and invalidate the old token.
-If token rotation is not required, specify `rotate=false`.
-
 ```bash
-TOKEN=$(vault token create -orphan -period=7d -policy=root -display-name="gitops-plugin" -field=token)
-vault write gitops/configure/vault vault_addr=http://127.0.0.1:8200 vault_token=$TOKEN rotate=true
+TOKEN=$(vault token create -orphan -period=7d -policy=root -display-name="gitops-plugin" -wrap-ttl 1m -field=wrapping_token)
+vault write gitops/configure/vault vault_addr=http://127.0.0.1:8200 wrapping_token=$TOKEN
 ```
+
+Here you create a wrapped token and pass it to the plugin. The plugin unwraps the token and
+stores it in storage. This token cannot be retrieved. If you use Enterprise Vault and enable
+sealwrap, the token will be additionally encrypted using seal.
 
 ## Signing
 
